@@ -70,24 +70,24 @@ open Lean Qq
     let x : Q(Rat) ← reconstructTerm t[0]!
     return q(«$x».abs)
   | .LEQ =>
-    if t[0]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm t[0]!
-    let y : Q(Rat) ← reconstructTerm t[1]!
+    if t[0]!.getSort!.isInteger && t[1]!.getSort!.isInteger then return none
+    let x : Q(Rat) ← ratArg t[0]!
+    let y : Q(Rat) ← ratArg t[1]!
     return q($x ≤ $y)
   | .LT =>
-    if t[0]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm t[0]!
-    let y : Q(Rat) ← reconstructTerm t[1]!
+    if t[0]!.getSort!.isInteger && t[1]!.getSort!.isInteger then return none
+    let x : Q(Rat) ← ratArg t[0]!
+    let y : Q(Rat) ← ratArg t[1]!
     return q($x < $y)
   | .GEQ =>
-    if t[0]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm t[0]!
-    let y : Q(Rat) ← reconstructTerm t[1]!
+    if t[0]!.getSort!.isInteger && t[1]!.getSort!.isInteger then return none
+    let x : Q(Rat) ← ratArg t[0]!
+    let y : Q(Rat) ← ratArg t[1]!
     return q($x ≥ $y)
   | .GT =>
-    if t[0]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm t[0]!
-    let y : Q(Rat) ← reconstructTerm t[1]!
+    if t[0]!.getSort!.isInteger && t[1]!.getSort!.isInteger then return none
+    let x : Q(Rat) ← ratArg t[0]!
+    let y : Q(Rat) ← ratArg t[1]!
     return q($x > $y)
   | .TO_REAL =>
     let x : Q(Int) ← reconstructTerm t[0]!
@@ -103,103 +103,118 @@ where
   mkRatLit (n : Nat) : Q(Rat) :=
     let lit : Q(Nat) := Lean.mkRawNatLit n
     q(OfNat.ofNat $lit)
+  /-- An argument of a real-sorted operator: integer-sorted arguments (cvc5 permits mixed
+      integer/real terms) are cast. -/
+  ratArg (t : cvc5.Term) : ReconstructM Expr := do
+    if t.getSort!.isInteger then
+      -- integer literals become rational literals (the polynomial normalizer expects literals)
+      if t.getKind! == .CONST_INTEGER then
+        let x := t.getIntegerValue!
+        let lit := mkRatLit x.natAbs
+        return if x ≥ 0 then lit else q(-$lit)
+      if t.getKind! == .NEG && t[0]!.getKind! == .CONST_INTEGER then
+        let lit := mkRatLit t[0]!.getIntegerValue!.natAbs
+        return if t[0]!.getIntegerValue! ≥ 0 then q(-$lit) else lit
+      let x : Q(Int) ← reconstructTerm t
+      return q($x : Rat)
+    reconstructTerm t
   leftAssocOp (op : Expr) (t : cvc5.Term) : ReconstructM Expr := do
-    let mut curr ← reconstructTerm t[0]!
+    let mut curr ← ratArg t[0]!
     for i in [1:t.getNumChildren] do
-      curr := mkApp2 op curr (← reconstructTerm t[i]!)
+      curr := mkApp2 op curr (← ratArg t[i]!)
     return curr
 
-def reconstructRewrite (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
-  match pf.getRewriteRule! with
+def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
+  match rw.rule with
   | .ARITH_POW_ELIM =>
-    if pf.getResult[0]![0]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm pf.getResult[0]![0]!
-    let c : Q(Nat) ← reconstructTerm pf.getResult[0]![1]!
-    let y : Q(Rat) ← reconstructTerm pf.getResult[1]!
+    if rw.result[0]![0]!.getSort!.isInteger then return none
+    let x : Q(Rat) ← reconstructTerm rw.result[0]![0]!
+    let c : Q(Nat) ← reconstructTerm rw.result[0]![1]!
+    let y : Q(Rat) ← reconstructTerm rw.result[1]!
     addThm q($x ^ $c = $y) q(Eq.refl ($x ^ $c))
   | .ARITH_DIV_TOTAL_ZERO_REAL =>
-    let x : Q(Rat) ← reconstructTerm pf.getArguments[1]!
+    let x : Q(Rat) ← reconstructTerm (rw.arg 1)
     addThm q($x / 0 = 0) q(@Rewrite.div_total_zero $x)
   | .ARITH_ELIM_GT =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q(($t > $s) = ¬($s ≥ $t)) q(@Rewrite.elim_gt $t $s)
   | .ARITH_ELIM_LT =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q(($t < $s) = ¬($t ≥ $s)) q(@Rewrite.elim_lt $t $s)
   | .ARITH_ELIM_LEQ =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q(($t ≤ $s) = ($s ≥ $t)) q(@Rewrite.elim_leq $t $s)
   | .ARITH_GEQ_NORM1_REAL =>
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q(($t ≥ $s) = ($t - $s ≥ 0)) q(@Rewrite.geq_norm1 $t $s)
   | .ARITH_EQ_ELIM_REAL =>
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q(($t = $s) = ($t ≥ $s ∧ $t ≤ $s)) q(@Rewrite.eq_elim $t $s)
   | .ARITH_INT_EQ_CONFLICT =>
-    let t : Q(Int) ← reconstructTerm pf.getArguments[1]!
-    let c : Q(Rat) ← reconstructTerm pf.getArguments[2]!
-    let h : Q((↑«$c».floor = $c) = False) ← reconstructProof pf.getChildren[0]!
+    let t : Q(Int) ← reconstructTerm (rw.arg 1)
+    let c : Q(Rat) ← reconstructTerm (rw.arg 2)
+    let h : Q((↑«$c».floor = $c) = False) ← (rw.premise 0)
     addThm q(($t = $c) = False) q(@Rewrite.eq_conflict $t $c $h)
   | .ARITH_INT_GEQ_TIGHTEN =>
-    let t : Q(Int) ← reconstructTerm pf.getArguments[1]!
-    let c : Q(Rat) ← reconstructTerm pf.getArguments[2]!
-    let cc : Q(Int) ← reconstructTerm pf.getArguments[3]!
-    let hc : Q((↑«$c».floor = $c) = False) ← reconstructProof pf.getChildren[0]!
-    let hcc : Q($cc = Int.addN [«$c».floor, 1]) ← reconstructProof pf.getChildren[1]!
+    let t : Q(Int) ← reconstructTerm (rw.arg 1)
+    let c : Q(Rat) ← reconstructTerm (rw.arg 2)
+    let cc : Q(Int) ← reconstructTerm (rw.arg 3)
+    let hc : Q((↑«$c».floor = $c) = False) ← (rw.premise 0)
+    let hcc : Q($cc = Int.addN [«$c».floor, 1]) ← (rw.premise 1)
     addThm q(($t ≥ $c) = ($t ≥ $cc)) q(@Rewrite.geq_tighten $t $c $cc $hc $hcc)
   | .ARITH_ABS_EQ =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let x : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let y : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let x : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let y : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((«$x».abs = «$y».abs) = ($x = $y ∨ $x = -$y)) q(@Rewrite.abs_eq $x $y)
   | .ARITH_ABS_REAL_GT =>
-    let x : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let y : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    let x : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let y : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((«$x».abs > «$y».abs) = ite ($x ≥ 0) (ite ($y ≥ 0) ($x > $y) ($x > -$y)) (ite ($y ≥ 0) (-$x > $y) (-$x > -$y)))
            q(@Rewrite.abs_gt $x $y)
   | .ARITH_GEQ_ITE_LIFT =>
-    if pf.getArguments[2]!.getSort!.isInteger then return none
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
+    if (rw.arg 2).getSort!.isInteger then return none
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
     let hc : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[2]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[3]!
-    let r : Q(Rat) ← reconstructTerm pf.getArguments[4]!
+    let t : Q(Rat) ← reconstructTerm (rw.arg 2)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 3)
+    let r : Q(Rat) ← reconstructTerm (rw.arg 4)
     addThm q((ite $c $t $s ≥ $r) = ite $c ($t ≥ $r) ($s ≥ $r)) q(@Rewrite.geq_ite_lift $c $hc $t $s $r)
   | .ARITH_LEQ_ITE_LIFT =>
-    if pf.getArguments[2]!.getSort!.isInteger then return none
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
+    if (rw.arg 2).getSort!.isInteger then return none
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
     let hc : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[2]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[3]!
-    let r : Q(Rat) ← reconstructTerm pf.getArguments[4]!
+    let t : Q(Rat) ← reconstructTerm (rw.arg 2)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 3)
+    let r : Q(Rat) ← reconstructTerm (rw.arg 4)
     addThm q((ite $c $t $s ≤ $r) = ite $c ($t ≤ $r) ($s ≤ $r)) q(@Rewrite.leq_ite_lift $c $hc $t $s $r)
   | .ARITH_MIN_LT1 =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((ite ($t < $s) $t $s ≤ $t) = True) q(@Rewrite.min_lt1 $t $s)
   | .ARITH_MIN_LT2 =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((ite ($t < $s) $t $s ≤ $s) = True) q(@Rewrite.min_lt2 $t $s)
   | .ARITH_MAX_GEQ1 =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((ite ($t ≥ $s) $t $s ≥ $t) = True) q(@Rewrite.max_geq1 $t $s)
   | .ARITH_MAX_GEQ2 =>
-    if pf.getArguments[1]!.getSort!.isInteger then return none
-    let t : Q(Rat) ← reconstructTerm pf.getArguments[1]!
-    let s : Q(Rat) ← reconstructTerm pf.getArguments[2]!
+    if (rw.arg 1).getSort!.isInteger then return none
+    let t : Q(Rat) ← reconstructTerm (rw.arg 1)
+    let s : Q(Rat) ← reconstructTerm (rw.arg 2)
     addThm q((ite ($t ≥ $s) $t $s ≥ $s) = True) q(@Rewrite.max_geq2 $t $s)
   | _ => return none
 
@@ -355,23 +370,36 @@ where
     else
       return ha
 
-def reconstructArithPolyNormRel (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
-  let lcx : Rat := pf.getChildren[0]!.getResult[0]![0]!.getRationalValue!
-  let cx : Q(Rat) ← reconstructTerm pf.getChildren[0]!.getResult[0]![0]!
-  let cy : Q(Rat) ← reconstructTerm pf.getChildren[0]!.getResult[1]![0]!
-  let x₁ : Q(Rat) ← reconstructTerm pf.getResult[0]![0]!
-  let x₂ : Q(Rat) ← reconstructTerm pf.getResult[0]![1]!
-  let y₁ : Q(Rat) ← reconstructTerm pf.getResult[1]![0]!
-  let y₂ : Q(Rat) ← reconstructTerm pf.getResult[1]![1]!
-  let h : Q($cx * ($x₁ - $x₂) = $cy * ($y₁ - $y₂)) ← reconstructProof pf.getChildren[0]!
-  let k := pf.getResult[0]!.getKind!
+/-- The value of a constant term written as a literal, a negation, a division of literals, or a
+    cast (Alethe proofs write coefficients as `(/ 1 4)`, `(- 1)`); `0` if it is not one. -/
+partial def constValue (t : cvc5.Term) : Rat :=
+  match t.getKind! with
+  | .CONST_INTEGER => t.getIntegerValue!
+  | .CONST_RATIONAL => t.getRationalValue!
+  | .NEG => - constValue t[0]!
+  | .TO_REAL => constValue t[0]!
+  | .DIVISION => let d := constValue t[1]!; if d == 0 then 0 else constValue t[0]! / d
+  | _ => 0
+
+/-- `ARITH_POLY_NORM_REL` / Alethe `poly_simp_rel`: from `premiseProof : cx * (x₁ - x₂) = cy * (y₁ - y₂)`
+    (the term `premiseResult`) conclude `result : (x₁ ⋈ x₂) = (y₁ ⋈ y₂)`. -/
+def reconstructArithPolyNormRel (premiseResult : cvc5.Term) (premiseProof : Expr) (result : cvc5.Term) : ReconstructM (Option Expr) := do
+  let lcx : Rat := constValue premiseResult[0]![0]!
+  let cx : Q(Rat) ← reconstructTerm premiseResult[0]![0]!
+  let cy : Q(Rat) ← reconstructTerm premiseResult[1]![0]!
+  let x₁ : Q(Rat) ← reconstructTerm result[0]![0]!
+  let x₂ : Q(Rat) ← reconstructTerm result[0]![1]!
+  let y₁ : Q(Rat) ← reconstructTerm result[1]![0]!
+  let y₂ : Q(Rat) ← reconstructTerm result[1]![1]!
+  let h : Q($cx * ($x₁ - $x₂) = $cy * ($y₁ - $y₂)) ← pure premiseProof
+  let k := result[0]!.getKind!
   let (hcx, hcy) :=
     if k == .EQUAL then (q(@of_decide_eq_true ($cx ≠ 0) _), q(@of_decide_eq_true ($cy ≠ 0) _))
     else if lcx > 0 then (q(@of_decide_eq_true ($cx > 0) _), q(@of_decide_eq_true ($cy > 0) _))
     else (q(@of_decide_eq_true ($cx < 0) _), q(@of_decide_eq_true ($cy < 0) _))
   let hcx := .app hcx q(Eq.refl true)
   let hcy := .app hcy q(Eq.refl true)
-  let n ← getThmName k pf.getResult[0]![0]!.getSort!.isInteger pf.getResult[1]![0]!.getSort!.isInteger (lcx > 0)
+  let n ← getThmName k result[0]![0]!.getSort!.isInteger result[1]![0]!.getSort!.isInteger (lcx > 0)
   return mkApp9 (.const n []) x₁ x₂ y₁ y₂ cx cy hcx hcy h
 where
   getThmName (k : cvc5.Kind) (il ir sign : Bool) : ReconstructM Name :=
@@ -406,7 +434,7 @@ where
 
 @[smt_proof_reconstruct] def reconstructRatProof : ProofReconstructor := fun pf => do match pf.getRule with
   | .DSL_REWRITE
-  | .THEORY_REWRITE => reconstructRewrite pf
+  | .THEORY_REWRITE => reconstructRewrite (.ofProof pf)
   | .ARITH_SUM_UB =>
     if pf.getResult[0]!.getSort!.isInteger then return none
     reconstructSumUB pf
@@ -472,7 +500,7 @@ where
     addTac q($a = $b) tac
   | .ARITH_POLY_NORM_REL =>
     if pf.getChildren[0]!.getResult[0]![0]!.getSort!.isInteger then return none
-    reconstructArithPolyNormRel pf
+    reconstructArithPolyNormRel pf.getChildren[0]!.getResult (← reconstructProof pf.getChildren[0]!) pf.getResult
   | .ARITH_MULT_SIGN =>
     if pf.getResult[1]![0]!.getSort!.isInteger then return none
     reconstructMulSign pf

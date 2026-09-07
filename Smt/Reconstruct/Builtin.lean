@@ -91,66 +91,66 @@ where
         t.getSymbol!.toName
     else Name.num `x t.getId!
 
-def reconstructRewrite (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
-  match pf.getRewriteRule! with
+def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
+  match rw.rule with
   | .DISTINCT_ELIM =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getResult[0]!.getSort!
-    let t  : Q($α) ← reconstructTerm pf.getResult[0]!
-    let t' : Q($α) ← reconstructTerm pf.getResult[1]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort rw.result[0]!.getSort!
+    let t  : Q($α) ← reconstructTerm rw.result[0]!
+    let t' : Q($α) ← reconstructTerm rw.result[1]!
     addThm q($t = $t') q(Eq.refl $t)
   | .ITE_TRUE_COND =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[1]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[2]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 1)
+    let y : Q($α) ← reconstructTerm (rw.arg 2)
     addThm q(ite True $x $y = $x) q(@Builtin.ite_true_cond $α $x $y)
   | .ITE_FALSE_COND =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[1]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[2]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 1)
+    let y : Q($α) ← reconstructTerm (rw.arg 2)
     addThm q(ite False $x $y = $y) q(@Builtin.ite_false_cond $α $x $y)
   | .ITE_NOT_COND =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[3]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
+    let y : Q($α) ← reconstructTerm (rw.arg 3)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite (¬$c) $x $y = ite $c $y $x) q(@Builtin.ite_not_cond $c $α $x $y $h)
   | .ITE_EQ_BRANCH =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite $c $x $x = $x) q(@Builtin.ite_eq_branch $c $α $x $h)
   | .ITE_THEN_LOOKAHEAD =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let z : Q($α) ← reconstructTerm pf.getArguments[4]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
+    let y : Q($α) ← reconstructTerm (rw.arg 3)
+    let z : Q($α) ← reconstructTerm (rw.arg 4)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite $c (ite $c $x $y) $z = ite $c $x $z) q(@Builtin.ite_then_lookahead $c $α $x $y $z $h)
   | .ITE_ELSE_LOOKAHEAD =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let z : Q($α) ← reconstructTerm pf.getArguments[4]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
+    let y : Q($α) ← reconstructTerm (rw.arg 3)
+    let z : Q($α) ← reconstructTerm (rw.arg 4)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite $c $x (ite $c $y $z) = ite $c $x $z) q(@Builtin.ite_else_lookahead $c $α $x $y $z $h)
   | .ITE_THEN_NEG_LOOKAHEAD =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let z : Q($α) ← reconstructTerm pf.getArguments[4]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
+    let y : Q($α) ← reconstructTerm (rw.arg 3)
+    let z : Q($α) ← reconstructTerm (rw.arg 4)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite $c (ite (¬$c) $x $y) $z = ite $c $y $z) q(@Builtin.ite_then_neg_lookahead $c $α $x $y $z $h)
   | .ITE_ELSE_NEG_LOOKAHEAD =>
-    let c : Q(Prop) ← reconstructTerm pf.getArguments[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let x : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let y : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let z : Q($α) ← reconstructTerm pf.getArguments[4]!
+    let c : Q(Prop) ← reconstructTerm (rw.arg 1)
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let x : Q($α) ← reconstructTerm (rw.arg 2)
+    let y : Q($α) ← reconstructTerm (rw.arg 3)
+    let z : Q($α) ← reconstructTerm (rw.arg 4)
     let h : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
     addThm q(ite $c $x (ite (¬$c) $y $z) = ite $c $x $y) q(@Builtin.ite_else_neg_lookahead $c $α $x $y $z $h)
   | _ => return none
@@ -202,7 +202,7 @@ def reconstructRewrite (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
     let y : Q($α) ← reconstructTerm pf.getResult[1]!
     addThm q($x = $y) q(Eq.refl $y)
   | .DSL_REWRITE
-  | .THEORY_REWRITE => reconstructRewrite pf
+  | .THEORY_REWRITE => reconstructRewrite (.ofProof pf)
   | .ITE_ELIM1 =>
     let c : Q(Prop) ← reconstructTerm pf.getChildren[0]!.getResult[0]!
     let hc : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)

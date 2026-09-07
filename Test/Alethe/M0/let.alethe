@@ -1,0 +1,8 @@
+(assume a0 (let ((x (or p q))) (and x (not r))))
+(assume a1 (not p))
+(assume a2 (or (not q) r))
+(step t0 (cl (or p q)) :rule and :premises (a0) :args (0))
+(step t1 (cl (not r)) :rule and :premises (a0) :args (1))
+(step t2 (cl p q) :rule or :premises (t0))
+(step t3 (cl (not q) r) :rule or :premises (a2))
+(step t4 (cl) :rule resolution :premises (t2 a1 t3 t1) :args (p true q true r true))

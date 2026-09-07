@@ -1,0 +1,8 @@
+(set-logic QF_UF)
+(declare-const p Bool)
+(declare-const q Bool)
+(declare-const r Bool)
+(assert (let ((x (or p q))) (and x (not r))))
+(assert (not p))
+(assert (or (not q) r))
+(check-sat)

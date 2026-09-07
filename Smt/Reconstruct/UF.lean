@@ -69,41 +69,41 @@ def getFVarOrConstExpr! (n : String) : ReconstructM Expr := do
     | _ => return none
   | _ => return none
 
-def reconstructRewrite (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
-  match pf.getRewriteRule! with
+def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
+  match rw.rule with
   | .EQ_REFL =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let t : Q($α) ← reconstructTerm pf.getArguments[1]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let t : Q($α) ← reconstructTerm (rw.arg 1)
     addThm q(($t = $t) = True) q(@UF.eq_refl $α $t)
   | .EQ_SYMM =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let t : Q($α) ← reconstructTerm pf.getArguments[1]!
-    let s : Q($α) ← reconstructTerm pf.getArguments[2]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let t : Q($α) ← reconstructTerm (rw.arg 1)
+    let s : Q($α) ← reconstructTerm (rw.arg 2)
     addThm q(($t = $s) = ($s = $t)) q(@UF.eq_symm $α $t $s)
   | .EQ_COND_DEQ =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let t : Q($α) ← reconstructTerm pf.getArguments[1]!
-    let s : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let r : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let h : Q(($s = $r) = False) ← reconstructProof pf.getChildren[0]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let t : Q($α) ← reconstructTerm (rw.arg 1)
+    let s : Q($α) ← reconstructTerm (rw.arg 2)
+    let r : Q($α) ← reconstructTerm (rw.arg 3)
+    let h : Q(($s = $r) = False) ← (rw.premise 0)
     addThm q((($t = $s) = ($t = $r)) = (¬$t = $s ∧ ¬$t = $r)) q(@UF.eq_cond_deq $α $t $s $r $h)
   | .EQ_ITE_LIFT =>
-    let c : Q(Bool) ← reconstructTerm pf.getArguments[1]!
+    let c : Q(Bool) ← reconstructTerm (rw.arg 1)
     let hc : Q(Decidable $c) ← Meta.synthDecidableInstance q($c)
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[2]!.getSort!
-    let t : Q($α) ← reconstructTerm pf.getArguments[2]!
-    let s : Q($α) ← reconstructTerm pf.getArguments[3]!
-    let r : Q($α) ← reconstructTerm pf.getArguments[4]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 2).getSort!
+    let t : Q($α) ← reconstructTerm (rw.arg 2)
+    let s : Q($α) ← reconstructTerm (rw.arg 3)
+    let r : Q($α) ← reconstructTerm (rw.arg 4)
     addThm q((ite $c $t $s = $r) = (ite $c ($t = $r) ($s = $r))) q(@UF.eq_ite_lift $α $c $hc $t $s $r)
   | .DISTINCT_BINARY_ELIM =>
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[1]!.getSort!
-    let t : Q($α) ← reconstructTerm pf.getArguments[1]!
-    let s : Q($α) ← reconstructTerm pf.getArguments[2]!
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort (rw.arg 1).getSort!
+    let t : Q($α) ← reconstructTerm (rw.arg 1)
+    let s : Q($α) ← reconstructTerm (rw.arg 2)
     addThm q(($t ≠ $s) = ¬($t = $s)) q(@UF.distinct_binary_elim $α $t $s)
   | _ => return none
 
 @[smt_proof_reconstruct] def reconstructUFProof : ProofReconstructor := fun pf => do match pf.getRule with
-  | .DSL_REWRITE => reconstructRewrite pf
+  | .DSL_REWRITE => reconstructRewrite (.ofProof pf)
   | .REFL =>
     let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort pf.getArguments[0]!.getSort!
     let a : Q($α) ← reconstructTerm pf.getArguments[0]!

@@ -28,5 +28,8 @@ initialize
   registerTraceClass `smt.reconstruct.sort
   registerTraceClass `smt.reconstruct.term
   registerTraceClass `smt.reconstruct.proof
+  registerTraceClass `smt.alethe
+  registerTraceClass `smt.alethe.parse
+  registerTraceClass `smt.alethe.step
 
 end Smt

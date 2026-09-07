@@ -1,0 +1,7 @@
+(assume a0 (= a b))
+(assume a1 (or p (not (! (= (f a) (f b)) :named @p_1))))
+(assume a2 (not p))
+(step t0 (cl (! (= (f a) (f b)) :named @p_2)) :rule cong :premises (a0))
+(step t1 (cl p (not @p_1)) :rule or :premises (a1))
+(step t2 (cl (not @p_2)) :rule resolution :premises (t1 a2) :args (p true))
+(step t3 (cl) :rule resolution :premises (t0 t2) :args (@p_1 true))

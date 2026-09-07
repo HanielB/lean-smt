@@ -197,14 +197,19 @@ def addTac (type : Expr) (tac : MVarId → MetaM Unit) : ReconstructM Expr := do
   trace[smt.reconstruct.proof] "have {name} : {type} := {mv}"
   return mv
 
-def addTrust (type : Expr) (pf : cvc5.Proof) : ReconstructM Expr := do
+/-- Add a step whose proof is not reconstructed: a fresh goal closed over the current assumptions
+    is recorded in `skippedGoals`. `info` describes the step for the trace. -/
+def addTrustWith (type : Expr) (info : MessageData) : ReconstructM Expr := do
   let name := Name.num `s (← incCount)
   let mv ← Meta.mkFreshExprMVar type .natural name
   skipStep mv.mvarId!
   trace[smt.reconstruct.proof] m!"have {name} : {type} := sorry"
-  trace[smt.reconstruct.proof]
-    m!"rule : {pf.getRule}\npremises : {pf.getChildren.map (·.getResult)}\nargs : {pf.getArguments}\nconclusion : {pf.getResult}"
+  trace[smt.reconstruct.proof] info
   return mv
+
+def addTrust (type : Expr) (pf : cvc5.Proof) : ReconstructM Expr :=
+  addTrustWith type
+    m!"rule : {pf.getRule}\npremises : {pf.getChildren.map (·.getResult)}\nargs : {pf.getArguments}\nconclusion : {pf.getResult}"
 
 def traceReconstructStep (r : Except Exception Expr) : ReconstructM MessageData :=
   return match r with
@@ -223,6 +228,36 @@ where
     _ ← pf.getChildren.mapM reconstructProof
     let type ← reconstructTerm pf.getResult
     addTrust type pf
+
+/-- A rewrite step (cvc5's `DSL_REWRITE`/`THEORY_REWRITE`, or an Alethe `rare_rewrite`), decoupled
+    from `cvc5.Proof` so that the per-theory rewrite reconstructors can be shared. -/
+structure RewriteStep where
+  rule : cvc5.ProofRewriteRule
+  /-- Instantiation arguments, indexed like `cvc5.Proof.getArguments` (index 0 is the rule id). -/
+  args : Array cvc5.Term
+  /-- Elements of list arguments, by index (defaults to the children of `args[i]`). -/
+  lists : Std.HashMap Nat (Array cvc5.Term) := {}
+  /-- The proved equality. -/
+  result : cvc5.Term
+  /-- Premises: their results and (lazily) their proofs. -/
+  premises : Array (cvc5.Term × ReconstructM Expr)
+
+namespace RewriteStep
+
+def arg (rw : RewriteStep) (i : Nat) : cvc5.Term := rw.args[i]!
+
+def list (rw : RewriteStep) (i : Nat) : Array cvc5.Term :=
+  rw.lists.getD i rw.args[i]!.getChildren
+
+def premise (rw : RewriteStep) (i : Nat) : ReconstructM Expr := rw.premises[i]!.2
+
+def premiseResult (rw : RewriteStep) (i : Nat) : cvc5.Term := rw.premises[i]!.1
+
+def ofProof (pf : cvc5.Proof) : RewriteStep :=
+  { rule := pf.getRewriteRule!, args := pf.getArguments, result := pf.getResult,
+    premises := pf.getChildren.map fun c => (c.getResult, reconstructProof c) }
+
+end RewriteStep
 
 end Reconstruct
 

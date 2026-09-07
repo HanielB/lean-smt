@@ -7,6 +7,8 @@ Authors: Abdalrhman Mohamed
 
 module
 
+public import Smt.Alethe
+public meta import Smt.Alethe
 public import Smt.BitVec
 public meta import Smt.BitVec
 public import Smt.Bool

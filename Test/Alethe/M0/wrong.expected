@@ -1,0 +1,2 @@
+holey: checked 2 steps, trusted 1 (resolution: 1), holes 0
+  t1 (resolution): [ac_rfl_top] expected ¬p and q to have the same AC operator

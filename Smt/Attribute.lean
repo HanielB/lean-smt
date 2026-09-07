@@ -77,4 +77,7 @@ initialize registerSmtAttr `smt_term_reconstruct `Smt.TermReconstructor
 initialize registerSmtAttr `smt_proof_reconstruct `Smt.ProofReconstructor
              "Utilize this function to translate cvc5 proofs to Lean expressions."
 
+initialize registerSmtAttr `alethe_rule_reconstruct `Smt.Alethe.RuleReconstructor
+             "Utilize this function to translate Alethe proof steps to Lean expressions."
+
 end Smt.Attribute
