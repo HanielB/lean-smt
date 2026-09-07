@@ -18,8 +18,10 @@ public import Smt.Alethe.Clause
 public meta import Smt.Alethe.Clause
 public import Smt.Alethe.Prop
 public meta import Smt.Alethe.Prop
-public import Smt.Alethe.RareRules
-public meta import Smt.Alethe.RareRules
+public import Smt.Alethe.Rare.Basic
+public import Smt.Alethe.Rare.Rules
+public import Smt.Alethe.Rare
+public meta import Smt.Alethe.Rare
 public import Smt.Alethe.UF
 public meta import Smt.Alethe.UF
 public import Smt.Alethe.Arith

@@ -11,8 +11,6 @@ public import Smt.Alethe.Clause
 public meta import Smt.Alethe.Clause
 public import Smt.Reconstruct.Quant
 public meta import Smt.Reconstruct.Quant
-public import Smt.Alethe.RareRules
-public meta import Smt.Alethe.RareRules
 public import Smt.Reconstruct.Util
 public meta import Smt.Reconstruct.Util
 public import Smt.Reconstruct.Prop

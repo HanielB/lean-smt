@@ -21,8 +21,8 @@ public import Smt.Reconstruct.Rat
 public meta import Smt.Reconstruct.Rat
 public import Smt.Reconstruct.Quant
 public meta import Smt.Reconstruct.Quant
-public import Smt.Alethe.RareRules
-public meta import Smt.Alethe.RareRules
+public import Smt.Alethe.Rare
+public meta import Smt.Alethe.Rare
 public import Lean.Meta.Native
 public meta import Lean.Meta.Native
 
@@ -108,37 +108,6 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
         | throwError "cong: no premise for {l[i]!} = {r[i]!}"
       hs := hs.push (← orient pr l[i]! r[i]!)
   addTac s.concl (UF.smtCongr · hs)
-
-/-- `rare_rewrite`: build a `RewriteStep` from the step's arguments and try the per-theory rewrite
-    reconstructors shared with the cvc5 path. -/
-def reconstructRareRewrite (s : Step) : ReconstructM (Option Expr) := do
-  let some (Arg.str name) := s.args[0]? | throwError "rare_rewrite: missing rule name"
-  -- rules newer than lean-cvc5's enumeration
-  if name == "or-not-refl" then
-    let t := s.args[1]!.term!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort t.getSort!
-    let te : Q($α) ← reconstructTerm t
-    let ps ← mkPropList ((nary .OR s.lits[0]![0]!).extract 1 (nary .OR s.lits[0]![0]!).size)
-    return some (← addThm s.concl (mkApp3 (mkConst ``or_not_refl [u]) α te ps))
-  let some rule := rareRuleOfName name | throwError "rare_rewrite: unknown RARE rule {name}"
-  let result := s.lits[0]!
-  -- index 0 stands for the rule id, as in `cvc5.Proof.getArguments`
-  let mut args := #[result]
-  let mut lists : Std.HashMap Nat (Array cvc5.Term) := {}
-  for a in s.args[1:] do
-    match a with
-    | .term t => args := args.push t
-    | .list ts =>
-      lists := lists.insert args.size ts
-      args := args.push result
-    | _ => throwError "rare_rewrite: unexpected argument"
-  let rw : RewriteStep := { rule, args, lists, result,
-                            premises := s.premises.map fun p => (p.lits[0]!, pure p.proof) }
-  for f in [Prop.reconstructRewrite, Builtin.reconstructRewrite, UF.reconstructRewrite,
-            Int.reconstructRewrite, Rat.reconstructRewrite, Quant.reconstructRewrite] do
-    if let some e ← f rw then
-      return some (← addThm s.concl e)
-  return none
 
 /-- Prove a clause `(cl l₁ … lₙ)` by refuting the negations of its literals: `k` receives the
     hypotheses `hᵢ : ¬lᵢ` (with their terms) and must return a proof of `False`. -/
@@ -298,7 +267,7 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       addThm q($t = $t') (← nativeDecideProof q($t = $t') hp)
     else
       addThm q($t = $t') (← decideProof q($t = $t') hp)
-  | "rare_rewrite" => reconstructRareRewrite s
+  | "rare_rewrite" => reconstructRareRule s
   | _ => return none
 where
   unNotTerm (t : cvc5.Term) : ReconstructM cvc5.Term := do

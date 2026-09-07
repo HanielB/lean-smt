@@ -114,9 +114,13 @@ def registerPremise (p : Premise) : AletheM Unit :=
 
 def recordTrust (s : Step) (msg : String) : AletheM Unit := do
   trace[smt.alethe.step] "trusting {s.id} ({s.rule}): {msg}"
+  -- `rare_rewrite` steps are counted per RARE rule
+  let rule := match s.rule, s.args[0]? with
+    | "rare_rewrite", some (Arg.str name) => s!"rare_rewrite:{name}"
+    | rule, _ => rule
   modifyD fun st => { st with stats := { st.stats with
-    trusted := st.stats.trusted.insert s.rule (st.stats.trusted.getD s.rule 0 + 1),
-    failures := st.stats.failures.push (s.id, s.rule, msg) } }
+    trusted := st.stats.trusted.insert rule (st.stats.trusted.getD rule 0 + 1),
+    failures := st.stats.failures.push (s.id, rule, msg) } }
 
 def countChecked : AletheM Unit :=
   modifyD fun st => { st with stats := { st.stats with checked := st.stats.checked + 1 } }
