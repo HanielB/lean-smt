@@ -41,9 +41,9 @@ structure State where
   fresh : Nat := 0
   /-- `define-fun`s of the problem: parameter names and body (parameters are bound atoms). -/
   defs : Std.HashMap String (Array String × Nat) := {}
-  /-- Closed `choice` terms, replaced by fresh constants: symbol, sort, and the node of the
-      `lambda` abstracting the choice's body. -/
-  choices : Array (String × Sexp × Nat) := #[]
+  /-- The epsilon symbols introduced for `choice` terms, per sort: symbol and sort. -/
+  choices : Array (String × Sexp) := #[]
+  choiceOfSort : Std.HashMap String String := {}
 
 abbrev M := StateT State (Except String)
 
@@ -148,16 +148,19 @@ partial def term (env : Env) : Sexp → M Nat
       | _ => throw' s!"ill-formed let binding {b}"
     term env' body
   | .expr [.atom "choice", .expr [.expr [.atom x, sort]], body] => do
-    -- a closed choice becomes a fresh constant whose meaning (`Classical.epsilon`) is attached at
-    -- reconstruction; an open one (under a binder) is left to fail
-    if env.vars.toList.any (·.2.isNone) then
-      mkList #[← mkAtom "choice", ← term env (.expr [.expr [.atom x, sort]]), ← term env body]
-    else
-      let lam ← term env (.expr [.atom "lambda", .expr [.expr [.atom x, sort]], body])
-      let sym ← freshSymbol "choice"
-      let v ← mkAtom sym
-      modify fun st => { st with choices := st.choices.push (sym, sort, lam) }
-      return v
+    -- `(choice ((x S)) φ)` becomes `(ε_S (lambda ((x S)) φ))` for a higher-order symbol `ε_S`
+    -- whose meaning (`Classical.epsilon`) is attached at reconstruction; this works for open
+    -- choices too, the bound variables being those of the lambda
+    let key := sort.serialize
+    let sym ← match (← get).choiceOfSort[key]? with
+      | some sym => pure sym
+      | none =>
+        let sym ← freshSymbol "choice"
+        modify fun st => { st with choices := st.choices.push (sym, sort),
+                                   choiceOfSort := st.choiceOfSort.insert key sym }
+        pure sym
+    let lam ← term env (.expr [.atom "lambda", .expr [.expr [.atom x, sort]], body])
+    mkList #[← mkAtom sym, lam]
   | .expr [.atom b, .expr vars, body] => do
     if binderKeywords.contains b then
       let mut env' := env
@@ -326,8 +329,8 @@ structure Result where
   proof : Proof Nat
   /-- Fresh anchor-variable symbols and their original names. -/
   renamed : Array (String × String)
-  /-- Closed `choice` terms: fresh symbol, sort, and the `lambda` node of the body. -/
-  choices : Array (String × Sexp × Nat)
+  /-- The epsilon symbols introduced for `choice` terms: symbol and sort. -/
+  choices : Array (String × Sexp)
 
 /-- Parse a problem and a proof. A single outer pair of parentheses around the proof is
     tolerated. -/

@@ -97,11 +97,23 @@ def resolveChain (s : Step) : ReconstructM (Array cvc5.Term × Expr) := do
       | throwError "no pivot found between {cc} and {c₂}"
     cp ← Prop.reconstructResolution cc c₂ pol l cp hp
     cc := Prop.getResolutionResult cc c₂ pol l
+    -- clauses are sets: drop the duplicates the resolution introduced (keeps the working clause
+    -- small; the kernel cost of the index map is linear)
+    (cc, cp) ← dedup cc cp
     -- Alethe removes every occurrence of the pivot: resolve again while it remains.
     while hasPivot cc c₂ l pol do
       cp ← Prop.reconstructResolution cc c₂ pol l cp hp
       cc := Prop.getResolutionResult cc c₂ pol l
+      (cc, cp) ← dedup cc cp
   return (cc, cp)
+where
+  dedup (cc : Array cvc5.Term) (cp : Expr) : ReconstructM (Array cvc5.Term × Expr) := do
+    let mut d := #[]
+    for l in cc do
+      if !d.contains l then d := d.push l
+    if d.size == cc.size then return (cc, cp)
+    let some cp' ← reindexClause cc cp d | return (cc, cp)
+    return (d, cp')
 
 /-- A proof of the stated clause of `s` from a computed clause `cc` with proof `cp`. -/
 def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM Expr := do
@@ -109,6 +121,10 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
     return cp
   if let some h ← reindexClause cc cp s.lits then
     return h
+  if smt.alethe.progress.get (← getOptions) > 0 then
+    let missing := cc.filter (!s.lits.contains ·)
+    IO.eprintln s!"[alethe] {s.id} ({s.rule}): AC fallback, computed clause has {cc.size} literals, {missing.size} not in the stated one: {missing.toList.take 3}"
+    (← IO.getStderr).flush
   fixClause (← mkClause cc) cp s.concl
 
 @[alethe_rule_reconstruct] def reconstructClausal : RuleReconstructor := fun s => do

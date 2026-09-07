@@ -56,8 +56,34 @@ def congrBinders (exists_ : Bool) (ys : Array Expr) (p q h : Expr) : MetaM (Expr
       return (ap, aq, mkApp4 (mkConst ``forall_congr [u]) α lp lq hx)
   ys.foldrM f (p, q, h)
 
+/-- Generalized `bind`: the subproof over the anchor's variables `xs` concludes a clause
+    `(cl ls ψ)` whose literals `ls` do not mention `xs`; the closing step is `(cl ls (∀ xs, ψ))`. -/
+def reconstructBindClause (s : Step) : ReconstructM Expr := do
+  let some a := s.anchor | throwError "bind outside of an anchor"
+  let some last := a.last | throwError "bind: empty subproof"
+  let n := s.lits.size
+  let quant := s.lits[n-1]!
+  if quant.getKind! != .FORALL then throwError "bind: expected a universal quantifier last"
+  if last.lits.size != n then throwError "bind: the subproof's clause has {last.lits.size} literals, expected {n}"
+  let ps ← mkPropList (last.lits.extract 0 (n-1))
+  -- the subproof's proof with the anchor's variables abstracted, innermost first
+  let mut h := zetaAssigns a (← instantiateMVars last.proof)
+  let mut body ← reconstructTerm last.lits[n-1]!
+  for y in a.vars.reverse do
+    let fv := y.2.2
+    let hy ← Meta.mkLambdaFVars #[fv] h        -- ∀ y, orN (ps ++ [ψ y])
+    let psi ← Meta.mkLambdaFVars #[fv] body     -- fun y => ψ y
+    let u ← Meta.getLevel (← Meta.inferType fv)
+    h := mkApp4 (mkConst ``orN_forall [u]) (← Meta.inferType fv) ps psi hy
+    body ← Meta.mkForallFVars #[fv] body
+  -- `orN (ps ++ [∀ xs, ψ])` is the stated clause up to the list structure
+  let cc := (last.lits.extract 0 (n-1)).push quant
+  concludeClause s cc h
+
 /-- `bind`: from the subproof's `φ = ψ` conclude `(∀ xs, φ) = (∀ ys, ψ)`. -/
 def reconstructBind (s : Step) : ReconstructM Expr := do
+  if !(s.lits.size == 1 && s.lits[0]!.getKind! == .EQUAL) then
+    return ← reconstructBindClause s
   let some a := s.anchor | throwError "bind outside of an anchor"
   let some last := a.last | throwError "bind: empty subproof"
   let k := s.lits[0]![0]!.getKind!
@@ -72,27 +98,37 @@ def reconstructBind (s : Step) : ReconstructM Expr := do
   let (_, _, h) ← congrBinders (k == .EXISTS) ys p q h
   return h
 
-/-- `sko_ex` / `sko_forall`: from the subproof's `φ = ψ` under `x := ε` conclude
-    `(∃ x, φ) = ψ` (resp. `(∀ x, φ) = ψ`). -/
+/-- `sko_ex` / `sko_forall`: from the subproof's `φ = ψ` under `x₁ := ε₁, …, xₙ := εₙ` conclude
+    `(∃ xs, φ) = ψ` (resp. `(∀ xs, φ) = ψ`). The skolems are sequential: `εᵢ` is the choice for
+    `xᵢ` in the quantifier over `xᵢ … xₙ` with the earlier variables already replaced. -/
 def reconstructSko (s : Step) (exists_ : Bool) : ReconstructM Expr := do
   let some a := s.anchor | throwError "sko: outside of an anchor"
   let some last := a.last | throwError "sko: empty subproof"
-  if a.assigns.size != 1 then throwError "sko: {a.assigns.size} assignments (one variable is supported)"
-  let (_, _, fv, _, eps) := a.assigns[0]!
+  if a.assigns.isEmpty then throwError "sko: no assignment"
   let quant := s.lits[0]![0]!
-  -- the body as a predicate, from the quantified term itself (its bound variable is `x`)
-  let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort quant[0]![0]!.getSort!
-  let inst : Q(Nonempty $α) ← Meta.synthInstance q(Nonempty $α)
-  let lam ← reconstructTerm quant  -- ∀ x, φ  or  ∃ x, φ
-  let pred : Q($α → Prop) ← match lam with
-    | .forallE n t b bi => pure (.lam n t b bi)
-    | e => do
-      let some (_, f) := e.app2? ``Exists | throwError "sko: unexpected quantified term {e}"
-      pure f
-  let h₁ : Expr := if exists_ then q(@sko_ex_eq $α $inst $pred) else q(@sko_forall_eq $α $inst $pred)
-  -- the subproof, with `x` replaced by the epsilon term
-  let h₂ ← instantiateMVars last.proof
-  let h₂ := h₂.replaceFVar fv eps
+  let mut cur ← reconstructTerm quant  -- ∀ x₁ … xₙ, φ  or  ∃ x₁ … xₙ, φ
+  let mut h : Option Expr := none
+  for (_, _, _, _, eps) in a.assigns do
+    let (pred, body) ← match exists_, cur with
+      | false, .forallE n t b bi => pure (Expr.lam n t b bi, b)
+      | true, e => do
+        let some (_, f) := e.app2? ``Exists | throwError "sko: unexpected quantified term {e}"
+        let .lam _ _ b _ := f | throwError "sko: unexpected predicate {f}"
+        pure (f, b)
+      | _, e => throwError "sko: unexpected quantified term {e}"
+    let α ← Meta.inferType (← Meta.mkFreshExprMVar none) |> fun _ => do
+      let .lam _ t _ _ := pred | throwError "sko: unexpected predicate"
+      pure t
+    let u ← Meta.getLevel α
+    let inst ← Meta.synthInstance (mkApp (mkConst ``Nonempty [u]) α)
+    let hi := mkApp3 (mkConst (if exists_ then ``sko_ex_eq else ``sko_forall_eq) [u]) α inst pred
+    h := some (← match h with
+      | none => pure hi
+      | some h₀ => Meta.mkEqTrans h₀ hi)
+    cur := body.instantiate1 eps
+  let some h₁ := h | throwError "sko: no assignment"
+  -- the subproof, with the variables replaced by the epsilon terms
+  let h₂ := zetaAssigns a (← instantiateMVars last.proof)
   Meta.mkEqTrans h₁ h₂
 
 /-- `onepoint`: `(∀ x, φ) = ψ` where `φ` contains the guard `¬(x = t)` (or `x = t → …`), resp.
@@ -167,6 +203,40 @@ def reconstructOnepoint (s : Step) : ReconstructM Expr := do
   let lemma := if k == .FORALL then ``onepoint_forall else ``onepoint_exists
   return mkAppN (mkConst lemma [u]) #[α, te, pred, q, h, heq]
 
+/-- `let`: the anchor binds `xᵢ := tᵢ`, the premises prove `sᵢ = tᵢ` for the bindings of the
+    `let` on the left (already expanded by the parser to `u[s/x]`), and the subproof proves
+    `u = v` under the bindings; conclude `u[s/x] = v`. -/
+def reconstructLet (s : Step) : ReconstructM Expr := do
+  let some a := s.anchor | throwError "let: outside of an anchor"
+  let some last := a.last | throwError "let: empty subproof"
+  let h ← instantiateMVars last.proof
+  let ty ← Meta.whnfR (← Meta.inferType h)
+  let some (_, u, _) := ty.eq? | throwError "let: the subproof does not prove an equality"
+  -- `u[s/x] = u[t/x]` from the premises, one binding at a time (outermost first)
+  let mut lhs := u        -- with the let-bound fvars
+  let mut hcong : Option Expr := none
+  for (_, _, fv, tTerm, te) in a.assigns do
+    -- the premise for this binding: `s = t` (or `t = s`); `s` is what the conclusion's `let` bound
+    let (_, hst) ← match s.premises.find? (fun p => p.lits.size == 1 && p.lits[0]!.getKind! == .EQUAL
+        && (p.lits[0]![1]! == tTerm || p.lits[0]![0]! == tTerm)) with
+      | some p =>
+        let (l, r) := (p.lits[0]![0]!, p.lits[0]![1]!)
+        if r == tTerm then pure (← reconstructTerm l, p.proof)
+        else pure (← reconstructTerm r, ← Meta.mkEqSymm p.proof)
+      | none => pure (te, ← Meta.mkEqRefl te)  -- `s` is `t` itself
+    -- a genuine lambda over the let-bound variable (`mkLambdaFVars` would keep it a `let`)
+    let some decl := (← getLCtx).find? fv.fvarId! | throwError "let: unknown variable"
+    let fn := Expr.lam decl.userName decl.type (lhs.abstract #[fv]) .default
+    let step ← Meta.mkCongrArg fn hst  -- (fun x => u) s = (fun x => u) t
+    hcong := some (← match hcong with
+      | none => pure step
+      | some h₀ => Meta.mkEqTrans h₀ step)
+    lhs := lhs.replaceFVar fv te
+  let h := zetaAssigns a h
+  match hcong with
+  | some hc => Meta.mkEqTrans hc h
+  | none => pure h
+
 /-- The quantifier rewrites of `Smt.Reconstruct.Quant`, driven by the result term only. -/
 def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
   match rule with
@@ -206,6 +276,7 @@ def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
     addThm s.concl (← Meta.mkAppM ``Prop.impliesElim #[hf])
   | "bind" => addThm s.concl (← reconstructBind s)
   | "onepoint" => addThm s.concl (← reconstructOnepoint s)
+  | "let" => addThm s.concl (← reconstructLet s)
   | "sko_ex" => addThm s.concl (← reconstructSko s true)
   | "sko_forall" => addThm s.concl (← reconstructSko s false)
   | "qnt_rm_unused" | "qnt_join" | "miniscope_distribute" | "miniscope_split" | "miniscope_ite" =>

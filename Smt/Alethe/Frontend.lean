@@ -68,17 +68,14 @@ def withProblemSymbols [Inhabited α] (prob : Problem) (skip : Array String) (k 
           withReader (fun r => { r with userNames := names }) do
             k (ss ++ is ++ fs)
 
-/-- Bind each `choice` constant to `Classical.epsilon` of its body (in order: a choice may mention
-    earlier ones). -/
-def withChoices (cs : List (cvc5.Term × cvc5.Term)) (k : ReconstructM α) : ReconstructM α := do
+/-- Bind each epsilon symbol `ε_S : (S → Prop) → S` to `Classical.epsilon`. -/
+def withChoices (cs : List cvc5.Term) (k : ReconstructM α) : ReconstructM α := do
   match cs with
   | [] => k
-  | (c, lam) :: cs =>
-    let f ← reconstructTerm lam
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort c.getSort!
+  | c :: cs =>
+    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort c.getSort!.getFunctionCodomainSort!
     let inst : Q(Nonempty $α) ← Meta.synthInstance q(Nonempty $α)
-    let f : Q($α → Prop) := f
-    let e : Q($α) := q(@Classical.epsilon $α $inst $f)
+    let e : Q(($α → Prop) → $α) := q(@Classical.epsilon $α $inst)
     withReader (fun r => { r with userNames := r.userNames.insert c.getSymbol! e }) (withChoices cs k)
 
 /-- Check the Alethe proof in `proofPath` against the SMT-LIB problem in `problemPath`. -/
@@ -104,8 +101,10 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
       let ctx : Reconstruct.Context := { native }
       -- symbols introduced by the proof (anchor variables, choice constants) are not the problem's
       let skip : Array String := realized.renamed.map (fun (x : String × String) => x.1)
-        ++ realized.choices.map (fun (c : cvc5.Term × cvc5.Term) => c.1.getSymbol!)
+        ++ realized.choices.map (fun (c : cvc5.Term) => c.getSymbol!)
       let ((type, stats), _) ← (withProblemSymbols realized.problem skip fun xs => do
+        if smt.alethe.progress.get (← getOptions) > 0 then
+          IO.eprintln s!"[alethe] {xs.size} problem symbols introduced"; (← IO.getStderr).flush
         withChoices realized.choices.toList do
           let (type, stats) ← reconstructProof realized
           let type ← Meta.mkForallFVars xs type

@@ -140,8 +140,87 @@ def reconstructRareRewrite (s : Step) : ReconstructM (Option Expr) := do
       return some (← addThm s.concl e)
   return none
 
+/-- Prove a clause `(cl l₁ … lₙ)` by refuting the negations of its literals: `k` receives the
+    hypotheses `hᵢ : ¬lᵢ` (with their terms) and must return a proof of `False`. -/
+def byRefutation (s : Step) (k : Array (cvc5.Term × Expr) → ReconstructM Expr) : ReconstructM Expr := do
+  let ps ← mkPropList s.lits
+  let decls ← s.lits.mapIdxM fun i l => do
+    let p ← reconstructTerm l
+    return (Name.num `h i, fun (_ : Array Expr) => pure (mkApp (mkConst ``Not) p))
+  let h ← Meta.withLocalDeclsD decls fun hs => do
+    Meta.mkLambdaFVars hs (← k (s.lits.zip hs))
+  return mkApp2 (mkConst ``orN_of_impliesN_not) ps h
+
+/-- From `hneg : ¬¬(a = b)` (or `¬¬(b = a)`) a proof of `a = b`. -/
+def eqOfNegNeg (hneg : Expr) (l : cvc5.Term) (a b : cvc5.Term) : ReconstructM Expr := do
+  let h ← Meta.mkAppM ``Prop.notNotElim #[hneg]
+  let (x, y) ← eqSides l[0]!
+  if x == a && y == b then return h
+  if x == b && y == a then return ← Meta.mkAppM ``Eq.symm #[h]
+  throwError "premise {l} does not relate {a} and {b}"
+
+/-- `eq_transitive`: `(cl (not (= t₁ t₂)) … (not (= tₙ₋₁ tₙ)) (= t₁ tₙ))`. -/
+def reconstructEqTransitive (s : Step) : ReconstructM Expr := do
+  let n := s.lits.size
+  if n < 2 then throwError "eq_transitive: too few literals"
+  let (a, b) ← eqSides s.lits[n-1]!
+  byRefutation s fun hs => do
+    -- chain the negated-negated equalities from `a`
+    let mut curr := a
+    let mut h : Option Expr := none
+    for (l, hneg) in hs[:n-1] do
+      let (x, y) ← eqSides l[0]!
+      let next := if x == curr then y else if y == curr then x else
+        curr
+      if next == curr && !(x == curr && y == curr) then throwError "eq_transitive: chain broken at {l}"
+      let hstep ← eqOfNegNeg hneg l curr next
+      h := some (← match h with
+        | none => pure hstep
+        | some h₀ => Meta.mkAppM ``Eq.trans #[h₀, hstep])
+      curr := next
+    if curr != b then throwError "eq_transitive: chain ends at {curr}, expected {b}"
+    let some hab := h | throwError "eq_transitive: no premises"
+    return mkApp hs[n-1]!.2 hab  -- ¬(a = b) applied to a = b
+
+/-- `eq_congruent`: `(cl (not (= t₁ u₁)) … (not (= tₙ uₙ)) (= (f ts) (f us)))`, and
+    `eq_congruent_pred`: `… (not (P ts)) (P us)`. -/
+def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
+  let n := s.lits.size
+  byRefutation s fun hs => do
+    let (l, r) ← if pred then pure (s.lits[n-2]![0]!, s.lits[n-1]!) else eqSides s.lits[n-1]!
+    if l.getKind! != r.getKind! || l.getNumChildren != r.getNumChildren then
+      throwError "eq_congruent: {l} and {r} have different shapes"
+    let start := if l.getKind! == .APPLY_UF then 1 else 0
+    let eqs := hs[:n - (if pred then 2 else 1)]
+    let mut args := #[]
+    for i in [start:l.getNumChildren] do
+      if l[i]! == r[i]! then
+        args := args.push (← mkRefl l[i]!)
+      else
+        let some (le, hneg) := eqs.toArray.find? (fun (le, _) =>
+            let (x, y) := (le[0]![0]!, le[0]![1]!)
+            (x == l[i]! && y == r[i]!) || (x == r[i]! && y == l[i]!))
+          | throwError "eq_congruent: no premise for {l[i]!} = {r[i]!}"
+        args := args.push (← eqOfNegNeg hneg le l[i]! r[i]!)
+    let le ← reconstructTerm l
+    let re ← reconstructTerm r
+    let goal ← Meta.mkEq le re
+    let mv ← Meta.mkFreshExprMVar goal
+    UF.smtCongr mv.mvarId! args
+    let hlr ← instantiateMVars mv
+    if pred then
+      -- hs[n-2] : ¬¬(P ts), hs[n-1] : ¬(P us)
+      let hp ← Meta.mkAppM ``Prop.notNotElim #[hs[n-2]!.2]
+      return mkApp hs[n-1]!.2 (← Meta.mkAppM ``Eq.mp #[hlr, hp])
+    else
+      return mkApp hs[n-1]!.2 hlr
+
 @[alethe_rule_reconstruct] def reconstructUF : RuleReconstructor := fun s => do
   match s.rule with
+  | "eq_transitive" => addThm s.concl (← reconstructEqTransitive s)
+  | "eq_congruent" => addThm s.concl (← reconstructEqCongruent s false)
+  | "eq_congruent_pred" => addThm s.concl (← reconstructEqCongruent s true)
+  | "ac_simp" => addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "refl" | "eq_reflexive" =>
     let (a, _) ← eqSides s.lits[0]!
     addThm s.concl (← mkRefl a)
@@ -167,12 +246,21 @@ def reconstructRareRewrite (s : Step) : ReconstructM (Option Expr) := do
     let h : Q($x ≠ $y) := pr.proof
     addThm s.concl q(Ne.symm $h)
   | "eq_symmetric" =>
-    -- (cl (not (= a b)) (= b a))
-    let (b, a) ← eqSides s.lits[1]!
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
-    let x : Q($α) ← reconstructTerm a
-    let y : Q($α) ← reconstructTerm b
-    addThm s.concl q(Prop.impliesElim (@Eq.symm $α $x $y))
+    if s.lits.size == 1 then
+      -- Carcara's form: (cl (= (= a b) (= b a)))
+      let (l, _) ← eqSides s.lits[0]!
+      let (a, b) ← eqSides l
+      let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
+      let x : Q($α) ← reconstructTerm a
+      let y : Q($α) ← reconstructTerm b
+      addThm s.concl q(@UF.eq_symm $α $x $y)
+    else
+      -- (cl (not (= a b)) (= b a))
+      let (b, a) ← eqSides s.lits[1]!
+      let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
+      let x : Q($α) ← reconstructTerm a
+      let y : Q($α) ← reconstructTerm b
+      addThm s.concl q(Prop.impliesElim (@Eq.symm $α $x $y))
   | "trans" =>
     let (a, b) ← eqSides s.lits[0]!
     -- chain the premises from `a`, orienting each one

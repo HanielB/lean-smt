@@ -210,6 +210,13 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
   if int then
     let l := coeffs.foldl (fun l c => Nat.lcm l c.den) 1
     coeffs := coeffs.map (· * l)
+  -- Carcara's convention: a negated inequality is oriented as `s > 0`/`s ≥ 0` and multiplied by
+  -- `|c|`; a negated equality stays `s1 - s2 = 0` and is multiplied by the signed `c`. Here the
+  -- inequalities are oriented the other way (`a - b < 0`), so equalities take `-c`.
+  coeffs := (s.lits.zip coeffs).map fun (l, c) =>
+    match negatedLiteral l with
+    | some (.eq, _, _) => -c
+    | _ => c.abs
   -- the combination must be contradictory: compute it first
   let mut comb : LinComb := {}
   let mut rel : Rel := .eq
@@ -219,7 +226,6 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
     | none => used := used.push false
     | some (r, a, b) =>
       if c == 0 then used := used.push false; continue
-      if r != .eq && c < 0 then throwError "la_generic: negative coefficient {c} on an inequality"
       let mut p := (linComb a).add (linComb b).neg  -- a - b ⋈ 0
       let mut r := r
       if int && r == .lt then
@@ -315,9 +321,58 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
   let me ← arg m
   addThm s.concl (← Meta.mkAppOptM n #[a, b, me])
 
+/-- `comp_simplify`: the comparison rewrites of the Alethe specification. -/
+def reconstructCompSimplify (s : Step) : ReconstructM Expr := do
+  let t := s.lits[0]!
+  if t.getKind! != .EQUAL then throwError "comp_simplify: expected an equality"
+  let l := t[0]!
+  let r := t[1]!
+  let int := l[0]!.getSort!.isInteger && l[1]!.getSort!.isInteger
+  let ns : Name := if int then `Smt.Alethe.Int else `Smt.Alethe.Rat
+  let arg := if int then reconstructTerm else ratArg
+  let lemma (n : String) (xs : Array cvc5.Term) : ReconstructM Expr := do
+    Meta.mkAppOptM (ns ++ Name.mkSimple n) (← xs.mapM (fun x => some <$> arg x))
+  let isConst (u : cvc5.Term) (b : Bool) := u.getKind! == .CONST_BOOLEAN && u.getBooleanValue! == b
+  match l.getKind!, r.getKind! with
+  -- (< a b) = (not (<= b a)), (> a b) = (not (<= a b))
+  | .LT, .NOT => if r[0]!.getKind! == .LEQ then lemma "lt_eq_not_le" #[l[0]!, l[1]!] else throwError "comp_simplify: shape"
+  | .GT, .NOT => if r[0]!.getKind! == .LEQ then lemma "lt_eq_not_le" #[l[1]!, l[0]!] else throwError "comp_simplify: shape"
+  -- (<= a b) = (not (< b a)), (>= a b) = (not (< a b))
+  | .LEQ, .NOT => if r[0]!.getKind! == .LT then lemma "le_eq_not_lt" #[l[0]!, l[1]!] else throwError "comp_simplify: shape"
+  | .GEQ, .NOT => if r[0]!.getKind! == .LT then lemma "le_eq_not_lt" #[l[1]!, l[0]!] else throwError "comp_simplify: shape"
+  -- (>= a b) = (<= b a), (> a b) = (< b a): definitional
+  | .GEQ, .LEQ | .GT, .LT => mkEqRefl l
+  | _, .CONST_BOOLEAN =>
+    if l[0]! == l[1]! then
+      if l.getKind! == .LEQ || l.getKind! == .GEQ then lemma "le_self_eq_true" #[l[0]!]
+      else lemma "lt_self_eq_false" #[l[0]!]
+    else
+      -- constants: decide the comparison
+      let le ← reconstructTerm l
+      let hp ← Meta.synthInstance (mkApp (mkConst ``Decidable) le)
+      let boolRfl (b : Name) := mkApp2 (mkConst ``Eq.refl [.succ .zero]) (mkConst ``Bool) (mkConst b)
+      if isConst r true then
+        Meta.mkAppM ``eq_true #[mkApp3 (mkConst ``of_decide_eq_true) le hp (boolRfl ``Bool.true)]
+      else
+        Meta.mkAppM ``eq_false #[mkApp3 (mkConst ``of_decide_eq_false) le hp (boolRfl ``Bool.false)]
+  | _, _ => throwError "comp_simplify: unsupported shape {t}"
+
 @[alethe_rule_reconstruct] def reconstructArith : RuleReconstructor := fun s => do
   match s.rule with
-  | "la_generic" => addThm s.concl (← reconstructLaGeneric s)
+  | "la_generic" | "la_tautology" => addThm s.concl (← reconstructLaGeneric s)
+  | "la_rw_eq" =>
+    -- (cl (= (= t u) (and (<= t u) (<= u t))))
+    let eq := s.lits[0]![0]!
+    let int := eq[0]!.getSort!.isInteger && eq[1]!.getSort!.isInteger
+    let n : Name := (if int then `Smt.Alethe.Int else `Smt.Alethe.Rat) ++ `la_rw_eq
+    let arg := if int then reconstructTerm else ratArg
+    addThm s.concl (← Meta.mkAppOptM n #[← arg eq[0]!, ← arg eq[1]!])
+  | "comp_simplify" => addThm s.concl (← reconstructCompSimplify s)
+  | "sum_simplify" | "prod_simplify" | "minus_simplify" | "unary_minus_simplify" | "div_simplify" =>
+    let t := s.lits[0]!
+    if t.getKind! != .EQUAL then throwError "{s.rule}: expected an equality"
+    let tac := if t[0]!.getSort!.isInteger then Int.polyNorm else Rat.polyNorm
+    addTac s.concl tac
   | "la_mult_pos" => reconstructLaMult s true
   | "la_mult_neg" => reconstructLaMult s false
   | "la_disequality" | "la_totality" =>

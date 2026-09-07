@@ -43,8 +43,9 @@ structure Realized where
   proof : Proof Term
   /-- Fresh anchor-variable symbols and their original names. -/
   renamed : Array (String × String)
-  /-- Closed `choice` terms: the fresh constant and the `lambda` of its body. -/
-  choices : Array (Term × Term) := #[]
+  /-- The epsilon symbols introduced for `choice` terms, as declared constants of sort
+      `(-> (-> S Bool) S)`. -/
+  choices : Array Term := #[]
 
 namespace Realize
 
@@ -210,13 +211,11 @@ def realize (r : Parser.Result) : cvc5.Env Realized := do
   let st : Realize.State := { parser, solver, sm, arena := r.arena }
   let ((problem, choices, proof), _) ← (do
       let p ← Realize.problem r.problemCmds r.asserts
-      -- choice constants are declared before the proof's terms are realized
+      -- epsilon symbols are declared before the proof's terms are realized
       let mut choices := #[]
-      for (sym, sort, lam) in r.choices do
-        Realize.command s!"(declare-const {sym} {sort.serialize})"
-        let c ← Realize.parseText sym
-        let l ← Realize.node lam
-        choices := choices.push (c, l)
+      for (sym, sort) in r.choices do
+        Realize.command s!"(declare-fun {sym} ((-> {sort.serialize} Bool)) {sort.serialize})"
+        choices := choices.push (← Realize.parseText sym)
       let cmds ← r.proof.cmds.mapM Realize.cmd
       return (p, choices, ({ cmds } : Proof Term))).run st
   return { problem, proof, renamed := r.renamed, choices }

@@ -51,11 +51,45 @@ def iteLemma (n : Name) (t : cvc5.Term) (hs : Array Expr := #[]) : ReconstructM 
 /-- Close the goal `lhs = rhs` of a `*_simplify` step with `simp` (the default simp set, which
     decides these propositional identities). -/
 def simpClose (mv : MVarId) : MetaM Unit := do
-  let ctx ← Meta.Simp.mkContext (simpTheorems := #[← Meta.getSimpTheorems])
-    (congrTheorems := ← Meta.getSimpCongrTheorems)
+  let thms ← Meta.getSimpTheorems
+  -- the classical propositional identities of the `*_simplify` rules
+  let extra : List Name := [`not_or, `Classical.not_and_iff_not_or_not, `Classical.not_imp_iff_and_not,
+    `Classical.imp_iff_not_or, `imp_iff_not_or, `Classical.not_not, `Classical.not_forall, `not_exists,
+    `and_imp, `or_imp, `imp_self, `and_self, `or_self]
+  let mut thms := thms
+  for n in extra do
+    if (← getEnv).contains n then
+      thms ← thms.addConst n
+  -- flattening, reordering and duplicates of ∧/∨ first (on the equality itself)
+  if ← (do try Meta.AC.rewriteUnnormalizedTop mv; pure true catch _ => pure false) then return
+  let ctx ← Meta.Simp.mkContext (simpTheorems := #[thms]) (congrTheorems := ← Meta.getSimpCongrTheorems)
   let (r, _) ← Meta.simpGoal mv ctx
   if let some (_, mv') := r then
     throwError "simp did not close the goal:{indentD (← mv'.getType)}"
+
+/-- `(or … φ … ¬φ …) = true` and `(and … φ … ¬φ …) = false` (also with a `true`/`false` literal). -/
+def reconstructComplementary (l r : cvc5.Term) : ReconstructM (Option Expr) := do
+  let isConst (u : cvc5.Term) (b : Bool) := u.getKind! == .CONST_BOOLEAN && u.getBooleanValue! == b
+  let disj := l.getKind! == .OR && isConst r true
+  let conj := l.getKind! == .AND && isConst r false
+  if !disj && !conj then return none
+  let lits := nary l.getKind! l
+  let ps ← mkPropList lits
+  let len ← Meta.mkAppM ``List.length #[ps]
+  let bound (i : Nat) : ReconstructM Expr := do Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, len])
+  -- a `true` (resp. `false`) literal
+  if let some i := lits.findIdx? (isConst · disj) then
+    let n := if disj then ``orN_eq_true_of_true else ``andN_eq_false_of_false
+    let h ← Meta.mkEqRefl (← reconstructTerm lits[i]!)
+    return some (mkAppN (mkConst n) #[ps, toExpr i, ← bound i, h])
+  -- a complementary pair
+  for i in [0:lits.size] do
+    for j in [0:lits.size] do
+      if isNotOf lits[j]! lits[i]! then
+        let n := if disj then ``orN_eq_true_of_compl else ``andN_eq_false_of_compl
+        let h ← Meta.mkEqRefl (← reconstructTerm lits[j]!)
+        return some (mkAppN (mkConst n) #[ps, toExpr i, toExpr j, ← bound i, ← bound j, h])
+  return none
 
 /-- The `*_simplify` rules: a table of the frequent shapes over the existing rewrite theorems,
     with `simp` as the fallback. -/
@@ -64,6 +98,8 @@ def reconstructSimplify (s : Step) : ReconstructM Expr := do
   if t.getKind! != .EQUAL then throwError "{s.rule}: expected an equality"
   let l := t[0]!
   let r := t[1]!
+  if let some h ← reconstructComplementary l r then
+    return ← addThm s.concl h
   let isConst (u : cvc5.Term) (b : Bool) := u.getKind! == .CONST_BOOLEAN && u.getBooleanValue! == b
   -- (= (= φ false) (not φ)), (= (= φ true) φ), (= (= φ φ) true), (= (= φ (not φ)) false)
   if l.getKind! == .EQUAL && l[0]!.getSort!.isBoolean then
@@ -90,7 +126,7 @@ def reconstructSimplify (s : Step) : ReconstructM Expr := do
 @[alethe_rule_reconstruct] def reconstructProp : RuleReconstructor := fun s => do
   match s.rule with
   | "equiv_simplify" | "implies_simplify" | "not_simplify" | "bool_simplify" | "and_simplify"
-  | "or_simplify" | "ite_simplify" | "eq_simplify" =>
+  | "or_simplify" | "ite_simplify" | "eq_simplify" | "connective_def" | "qnt_duality" =>
     reconstructSimplify s
   | "true" => addThm s.concl q(trivial)
   | "false" => addThm s.concl q(not_false_cl)

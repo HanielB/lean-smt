@@ -26,6 +26,11 @@ namespace Smt.Alethe
 open Lean Qq
 open Smt.Reconstruct
 
+register_option smt.alethe.progress : Nat := {
+  defValue := 0
+  descr := "print a progress line to stderr every N steps, and slow or fallback steps (0: off)"
+}
+
 /-- A previously checked step (or an assumption), as seen by later steps. -/
 structure Premise where
   id : String

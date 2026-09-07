@@ -211,4 +211,59 @@ theorem or_not_refl {α : Sort u} (t : α) (ps : List Prop) : orN ((¬t = t) :: 
   | nil => exact propext ⟨fun h => h rfl, fun h => h.elim⟩
   | cons p ps => exact propext ⟨fun h => h.elim (fun h => (h rfl).elim) id, fun h => .inr h⟩
 
+/-! ### veriT rules: `la_rw_eq`, `comp_simplify` -/
+
+theorem Int.la_rw_eq {a b : Int} : (a = b) = (a ≤ b ∧ b ≤ a) :=
+  propext ⟨fun h => ⟨Int.le_of_eq h, Int.le_of_eq h.symm⟩, fun ⟨h₁, h₂⟩ => Int.le_antisymm h₁ h₂⟩
+
+theorem Rat.la_rw_eq {a b : Rat} : (a = b) = (a ≤ b ∧ b ≤ a) :=
+  propext ⟨fun h => ⟨h ▸ Rat.le_refl, h ▸ Rat.le_refl⟩,
+    fun ⟨h₁, h₂⟩ => Smt.Reconstruct.Rat.trichotomy₂ h₁ h₂⟩
+
+theorem Int.lt_eq_not_le {a b : Int} : (a < b) = ¬b ≤ a := propext Int.not_le.symm
+theorem Rat.lt_eq_not_le {a b : Rat} : (a < b) = ¬b ≤ a := propext Rat.not_le.symm
+theorem Int.le_eq_not_lt {a b : Int} : (a ≤ b) = ¬b < a := propext Int.not_lt.symm
+theorem Rat.le_eq_not_lt {a b : Rat} : (a ≤ b) = ¬b < a := propext Rat.not_lt.symm
+theorem Int.le_self_eq_true {a : Int} : (a ≤ a) = True := eq_true (Int.le_refl a)
+theorem Rat.le_self_eq_true {a : Rat} : (a ≤ a) = True := eq_true Rat.le_refl
+theorem Int.lt_self_eq_false {a : Int} : (a < a) = False := eq_false (Int.lt_irrefl a)
+theorem Rat.lt_self_eq_false {a : Rat} : (a < a) = False := eq_false Rat.lt_irrefl
+
+/-! ### Generalized `bind`: a clause derived under the bound variables -/
+
+/-- From `∀ x, (cl ps (ψ x))`, where the literals `ps` do not depend on `x`, conclude
+    `(cl ps (∀ x, ψ x))`. -/
+theorem orN_forall {α : Sort u} : ∀ (ps : List Prop) {ψ : α → Prop},
+    (∀ x, orN (ps ++ [ψ x])) → orN (ps ++ [∀ x, ψ x])
+  | [], _, h => h
+  | p :: ps, ψ, h => by
+    show orN (p :: (ps ++ [∀ x, ψ x]))
+    rw [orN_cons_append]
+    exact match Classical.em p with
+    | .inl hp => .inl hp
+    | .inr hnp => .inr (orN_forall ps fun x => by
+        have hx := h x
+        rw [List.cons_append, orN_cons_append] at hx
+        exact hx.resolve_left hnp)
+
+/-! ### Tautologies and contradictions with complementary literals (`or_simplify`, `and_simplify`) -/
+
+theorem orN_eq_true_of_compl {ps : List Prop} (i j : Nat) (hi : i < ps.length) (hj : j < ps.length)
+    (h : ps[j] = ¬ps[i]) : orN ps = True :=
+  eq_true (match Classical.em ps[i] with
+    | .inl hp => orN_of_getElem i hi hp
+    | .inr hn => orN_of_getElem j hj (h ▸ hn))
+
+theorem orN_eq_true_of_true {ps : List Prop} (i : Nat) (hi : i < ps.length) (h : ps[i] = True) :
+    orN ps = True :=
+  eq_true (orN_of_getElem i hi (h ▸ trivial))
+
+theorem andN_eq_false_of_compl {ps : List Prop} (i j : Nat) (hi : i < ps.length) (hj : j < ps.length)
+    (h : ps[j] = ¬ps[i]) : andN ps = False :=
+  eq_false fun hps => (h ▸ (Smt.Reconstruct.Prop.and_elim hps j (hi := hj))) (Smt.Reconstruct.Prop.and_elim hps i (hi := hi))
+
+theorem andN_eq_false_of_false {ps : List Prop} (i : Nat) (hi : i < ps.length) (h : ps[i] = False) :
+    andN ps = False :=
+  eq_false fun hps => h ▸ (Smt.Reconstruct.Prop.and_elim hps i (hi := hi))
+
 end Smt.Alethe
