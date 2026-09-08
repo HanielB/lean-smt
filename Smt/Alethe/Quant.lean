@@ -89,7 +89,8 @@ def reconstructBind (s : Step) : ReconstructM Expr := do
   let ys := a.vars.map (·.2.2)
   let h ← instantiateMVars last.proof
   let h := zetaAssigns a h
-  let ty ← Meta.whnfR (← Meta.inferType h)
+  -- the recorded conclusion, not the proof term's type (a clause lemma may state it as an `orN`)
+  let ty ← Meta.whnfR (zetaAssigns a last.concl)
   let some (_, p, q) := ty.eq? | throwError "bind: the subproof does not prove an equality"
   let p := zetaAssigns a p
   let q := zetaAssigns a q
@@ -150,7 +151,7 @@ def reconstructOnepoint (s : Step) : ReconstructM Expr := do
   -- heq : p t = q, from the subproof (x is let-bound to t)
   let heq ← instantiateMVars last.proof
   let heq := heq.replaceFVar fv te
-  let ty ← Meta.whnfR (← Meta.inferType heq)
+  let ty ← Meta.whnfR (last.concl.replaceFVar fv te)
   let some (_, _, q) := ty.eq? | throwError "onepoint: the subproof does not prove an equality"
   -- h : ∀ x, x ≠ t → p x   (resp. ∀ x, p x → x = t), from the guard literal
   let h ← Meta.withLocalDeclD `x α fun x => do
@@ -208,7 +209,7 @@ def reconstructLet (s : Step) : ReconstructM Expr := do
   let some a := s.anchor | throwError "let: outside of an anchor"
   let some last := a.last | throwError "let: empty subproof"
   let h ← instantiateMVars last.proof
-  let ty ← Meta.whnfR (← Meta.inferType h)
+  let ty ← Meta.whnfR last.concl
   let some (_, u, _) := ty.eq? | throwError "let: the subproof does not prove an equality"
   -- `u[s/x] = u[t/x]` from the premises, one binding at a time (outermost first)
   let mut lhs := u        -- with the let-bound fvars

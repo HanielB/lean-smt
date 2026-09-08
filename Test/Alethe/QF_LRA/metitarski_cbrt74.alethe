@@ -39,7 +39,7 @@
 (step t37 (cl @p_31) :rule resolution :premises (t15 t20 t36) :args (@p_33 @p_24 @p_34 @p_24))
 (step t38 (cl (=> (! (and (! (< -1/1 0.0) :named @p_42) (! (> skoX 0.0) :named @p_43)) :named @p_41) @p_32)) :rule la_mult_neg)
 (step t39 (cl (not @p_41) @p_32) :rule implies :premises (t38))
-(step t40 (cl (= (! (= @p_42 @p_29) :named @p_44) @p_42)) :rule equiv_simplify)
+(step t40 (cl (= (! (= @p_42 @p_29) :named @p_44) @p_42)) :rule rare_rewrite :args ("bool-eq-true" @p_42))
 (step t41 (cl (not @p_44) @p_42) :rule equiv1 :premises (t40))
 (step t42 (cl @p_44) :rule evaluate)
 (step t43 (cl @p_42) :rule resolution :premises (t41 t42) :args (@p_44 @p_24))
