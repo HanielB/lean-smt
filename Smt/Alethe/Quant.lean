@@ -165,13 +165,14 @@ def reconstructOnepoint (s : Step) : ReconstructM Expr := do
       Meta.withLocalDeclD `hx hxt fun hnx => do
         let lits ← collectPropsInOrChain body
         let proof ← match body with
-          | .forallE _ d _ _ =>  -- x = t → B
+          | .forallE _ d b _ =>  -- x = t → B: under x ≠ t the guard is refuted, giving B
             if !isGuard d then throwError "onepoint: no guard in {body}"
+            if b.hasLooseBVars then throwError "onepoint: dependent guard in {body}"
             let hd ← Meta.withLocalDeclD `hd d fun hd => do
               let hxt' := match d.eq? with
                 | some (_, l₁, _) => if l₁ == x then hd else mkApp4 (mkConst ``Eq.symm [u]) α te x hd
                 | none => hd
-              Meta.mkLambdaFVars #[hd] (← Meta.mkAbsurd body hxt' hnx)
+              Meta.mkLambdaFVars #[hd] (← Meta.mkAbsurd b hxt' hnx)
             pure hd
           | _ =>
             let some i := lits.findIdx? (fun l => l.isAppOfArity ``Not 1 && isGuard l.appArg!)
