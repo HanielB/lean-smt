@@ -104,7 +104,7 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
         ++ realized.choices.map (fun (c : cvc5.Term) => c.getSymbol!)
       let ((type, stats), _) ← (withProblemSymbols realized.problem skip fun xs => do
         if smt.alethe.progress.get (← getOptions) > 0 then
-          IO.eprintln s!"[alethe] {xs.size} problem symbols introduced"; (← IO.getStderr).flush
+          progressLine s!"[alethe] {xs.size} problem symbols introduced"
         withChoices realized.choices.toList do
           let r ← reconstructProof realized
           let type ← Meta.mkForallFVars xs r.type

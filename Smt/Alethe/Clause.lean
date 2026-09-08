@@ -123,8 +123,7 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
     return h
   if smt.alethe.progress.get (← getOptions) > 0 then
     let missing := cc.filter (!s.lits.contains ·)
-    IO.eprintln s!"[alethe] {s.id} ({s.rule}): AC fallback, computed clause has {cc.size} literals, {missing.size} not in the stated one: {missing.toList.take 3}"
-    (← IO.getStderr).flush
+    progressLine s!"[alethe] {s.id} ({s.rule}): AC fallback, computed clause has {cc.size} literals, {missing.size} not in the stated one: {missing.toList.take 3}"
   fixClause (← mkClause cc) cp s.concl
 
 @[alethe_rule_reconstruct] def reconstructClausal : RuleReconstructor := fun s => do

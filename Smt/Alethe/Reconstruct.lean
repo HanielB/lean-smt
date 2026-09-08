@@ -259,8 +259,7 @@ def runStepData (d : StepData cvc5.Term) : AletheM Unit := do
   if every > 0 then
     let n := (← getD).steps.size
     if n % every == 0 then
-      IO.eprintln s!"[alethe] step {n}: {d.id} ({d.rule}, {d.cl.size} literals) at {← IO.monoMsNow} ms"
-      (← IO.getStderr).flush
+      progressLine s!"[alethe] step {n}: {d.id} ({d.rule}, {d.cl.size} literals) at {← IO.monoMsNow} ms"
   let t₀ ← IO.monoMsNow
   let s ← mkStep d
   let e ← concludeStep s (← reconstructStep s)
@@ -268,15 +267,14 @@ def runStepData (d : StepData cvc5.Term) : AletheM Unit := do
   if every > 0 then
     let dt := (← IO.monoMsNow) - t₀
     if dt ≥ 200 then
-      IO.eprintln s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {dt} ms"
-      (← IO.getStderr).flush
+      progressLine s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {dt} ms"
 
 /-- A top-level `assume`: bind it to the assertion with the same term. A reflexive equality is
     accepted without an assertion: it is how a `define-fun` of the problem surfaces once the
     defined symbol has been expanded on both sides (cvc5 asserts definitions as equations). -/
 def runAssume (id : String) (t : cvc5.Term) : AletheM Unit := do
   if smt.alethe.progress.get (← getOptions) > 0 then
-    IO.eprintln s!"[alethe] assume {id}"; (← IO.getStderr).flush
+    progressLine s!"[alethe] assume {id}"
   let st ← getD
   match st.asserts.find? (·.1 == t) with
   | some (_, p, h) => registerPremise { id, lits := #[t], concl := p, proof := h }
@@ -398,7 +396,7 @@ def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult :
     let p : Q(Prop) ← reconstructTerm t
     return p
   if smt.alethe.progress.get (← getOptions) > 0 then
-    IO.eprintln s!"[alethe] {as.size} assertions reconstructed"; (← IO.getStderr).flush
+    progressLine s!"[alethe] {as.size} assertions reconstructed"
   let decls := as.mapIdx fun i p => (Name.num `a i, fun (_ : Array Expr) => pure p)
   let rs ← getReconstructors ``RuleReconstructor RuleReconstructor
   Meta.withLocalDeclsD decls fun hs => withAssums hs do

@@ -31,6 +31,11 @@ register_option smt.alethe.progress : Nat := {
   descr := "print a progress line to stderr every N steps, and slow or fallback steps (0: off)"
 }
 
+/-- Write a progress line to the process's standard error directly: during command elaboration
+    Lean captures `IO.eprintln` into the message log, which only appears when the command ends. -/
+def progressLine (s : String) : IO Unit :=
+  IO.FS.withFile "/dev/stderr" .append fun h => h.putStrLn s
+
 /-- A previously checked step (or an assumption), as seen by later steps. -/
 structure Premise where
   id : String
