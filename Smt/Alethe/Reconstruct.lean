@@ -98,6 +98,8 @@ structure DState where
       (inlined into later steps) and trusted steps become goals, as in the cvc5 path. Used by the
       `alethe` tactic, where the kernel checks the closed goal once. -/
   term : Bool := false
+  /-- In term mode, the proof of the top-level empty clause. -/
+  refutation : Option Expr := none
 
 abbrev AletheM := ReaderT (IO.Ref DState) ReconstructM
 
@@ -113,7 +115,8 @@ def getPremise (id : String) : AletheM Premise := do
   | some p => return p
   | none => throwError "unknown step or assumption '{id}'"
 
-def registerPremise (p : Premise) : AletheM Unit :=
+def registerPremise (p : Premise) : AletheM Unit := do
+  if (← getD).steps.contains p.id then throwError "duplicate step id '{p.id}'"
   modifyD fun st => { st with steps := st.steps.insert p.id p }
 
 def recordTrust (s : Step) (msg : String) : AletheM Unit := do
@@ -198,8 +201,28 @@ def concludeStep (s : Step) (e? : Option Expr) : AletheM Expr := do
     if s.lits.isEmpty then
       modifyD fun st => { st with stats := { st.stats with emptyClause := true } }
     match e? with
-    | some e => countChecked; return e
-    | none => addTrustWith s.concl m!"Alethe step {s.id} ({s.rule})"
+    | some e =>
+      -- the proof must be closed over the base context: a local hypothesis of a subproof or of a
+      -- reconstructor that escaped would make the final term ill-formed
+      let e ← instantiateMVars e
+      let escaped := (collectFVars {} e).fvarSet.toList.filter fun fv => !st.baseLctx.contains fv
+      if !escaped.isEmpty then
+        let lctx ← getLCtx
+        let names := escaped.map fun fv => match lctx.find? fv with
+          | some d => d.userName.toString
+          | none => toString fv.name
+        recordTrust s s!"proof mentions local variables outside the problem's context: {names}"
+        let e ← addTrustWith s.concl m!"Alethe step {s.id} ({s.rule})"
+        if s.lits.isEmpty then modifyD fun st => { st with refutation := some e }
+        return e
+      else
+        countChecked
+        if s.lits.isEmpty then modifyD fun st => { st with refutation := some e }
+        return e
+    | none =>
+      let e ← addTrustWith s.concl m!"Alethe step {s.id} ({s.rule})"
+      if s.lits.isEmpty then modifyD fun st => { st with refutation := some e }
+      return e
   else if st.depth == 0 then
     if let some e := e? then
       if ← kernelCheck s e then
@@ -388,10 +411,11 @@ def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult :
     let ps := listExpr as.toList (mkSort .zero)
     let type := mkApp (mkConst ``Not) (mkApp (mkConst ``andN) ps)
     let mut proof := none
-    if term && st.stats.emptyClause then
-      -- the empty clause's proof, `False` under the assertion hypotheses
-      if let some p := st.steps.toList.find? (fun (_, p) => p.lits.isEmpty) then
-        let f ← Meta.mkLambdaFVars hs (← instantiateMVars p.2.proof)   -- impliesN as False
+    if term then
+      -- the top-level empty clause's proof, `False` under the assertion hypotheses (an empty
+      -- clause inside a subproof depends on that subproof's assumptions and is not it)
+      if let some r := st.refutation then
+        let f ← Meta.mkLambdaFVars hs (← instantiateMVars r)   -- impliesN as False
         let hp ← Meta.withLocalDeclD `h (mkApp (mkConst ``andN) ps) fun h =>
           Meta.mkLambdaFVars #[h] (mkAppN (mkConst ``Builtin.scopes) #[ps, mkConst ``False, f, h])
         proof := some hp

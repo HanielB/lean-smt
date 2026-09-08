@@ -144,9 +144,11 @@ def arg : Arg Nat → M (Arg Term)
     return .term (← node t)
   | .list ts => return .list (← ts.mapM node)
   | .str s => return .str s
-  | .assign x v t =>
-    -- `forall_inst` assignments: the variable is bound by the quantifier, not declared
-    return .assign x (← node v) (← node t)
+  | .assign x _ t => do
+    -- `forall_inst` assignments `(:= x t)`: the variable is bound by the quantifier, not declared,
+    -- so it cannot be realized; the reconstructor matches it by name and only uses the term
+    let t ← node t
+    return .assign x t t
   | .binder x s v => return .binder x s (← node v)
 
 /-- Realize the arguments of an anchor, declaring the variables it introduces. -/
