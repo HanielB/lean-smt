@@ -70,3 +70,50 @@ theorem identity : ∀ (a : G), a * 1 = a := by
 theorem unique_identity : ∀ (e : G), (∀ a, e * a = a) ↔ e = 1 := by
   smt +mono [mul_assoc, one_mul, inv_mul_cancel]
 ```
+## Alethe proofs
+
+`lean-smt` can also check proofs in the
+[Alethe](https://verit.gitlabpages.uliege.be/alethe/specification.pdf) format,
+as produced by cvc5 or veriT and elaborated by
+[Carcara](https://github.com/ufmg-smite/carcara). Every step of the proof is
+reconstructed with the same machinery as the `smt` tactic and checked by Lean's
+kernel; steps that cannot be reconstructed are reported (and returned as goals
+by the tactic), never silently trusted.
+
+The command `#check_alethe` checks a proof file against an SMT-LIB problem:
+```lean
+import Smt
+
+#check_alethe "problem.smt2" "problem.alethe"
+-- valid: checked 481 steps, trusted 0, holes 0
+```
+The proof is expected to be elaborated by Carcara with
+```
+carcara elaborate --expand-let-bindings --allow-int-real-subtyping \
+  --rare-file Smt/Alethe/Rare/rewrites.eo \
+  --pipeline polyeq local core-simp-rare --core-rules <the *_simplify rules> \
+  -- problem.alethe problem.smt2
+```
+(`polyeq` and `local` make implicit reasoning explicit and give resolution steps
+their pivots; the `core-simp-rare` pass turns the `*_simplify` rules into chains of
+`rare_rewrite` steps). For veriT proofs, add the legacy rules `qnt_cnf ite_intro
+bfun_elim ac_simp` to `--core-rules`.
+
+The `alethe` tactic runs this pipeline on a goal: it translates the goal like
+`smt`, asks cvc5 for an Alethe proof, elaborates it with Carcara (an external
+process, found through the option `smt.alethe.carcara`, the environment
+variable `CARCARA`, or the `PATH`), and checks the result:
+```lean
+example (p q : Prop) (hp : p) (hpq : p → q) : q := by
+  alethe [hp, hpq]
+```
+It accepts the same configuration and hints as `smt`; the options
+`smt.alethe.pipeline`, `smt.alethe.coreRules` and `smt.alethe.rareFile` control
+the Carcara run.
+
+`rare_rewrite` steps are checked against Lean theorems generated from the RARE
+rule file: `Smt/Alethe/Rare/gen.py` translates every rule of
+`Smt/Alethe/Rare/rewrites.eo` into a theorem statement in
+`Smt/Alethe/Rare/Rules.lean` (proofs are written in that file and preserved
+when the rules are regenerated; a rule whose proof is still `sorry` is reported
+as trusted).

@@ -106,12 +106,29 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
         if smt.alethe.progress.get (← getOptions) > 0 then
           IO.eprintln s!"[alethe] {xs.size} problem symbols introduced"; (← IO.getStderr).flush
         withChoices realized.choices.toList do
-          let (type, stats) ← reconstructProof realized
-          let type ← Meta.mkForallFVars xs type
-          return (type, stats)).run ctx {}
+          let r ← reconstructProof realized
+          let type ← Meta.mkForallFVars xs r.type
+          return (type, r.stats)).run ctx {}
       pure (type, stats)
     modify fun (ts : Array (String × Nat)) => ts.push ("kernel", stats.kernelMs)
     return ({ type, stats, timings := #[] } : CheckResult)).run #[]
   return { r with timings }
+
+/-- Parse and realize a problem and an (elaborated) proof given as text, and reconstruct the
+    proof as a term, with the problem's symbols resolved through `ctx.userNames` (the `alethe`
+    tactic). Returns the result and the goals of the trusted steps. -/
+def reconstructAletheText (problemText proofText : String) (ctx : Reconstruct.Context) :
+    MetaM (ProofResult × List MVarId) := do
+  withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) do
+  let problemCmds ← parseSexps "problem" problemText
+  let proofSexps ← parseSexps "proof" proofText
+  let parsed ← match Parser.parse problemCmds proofSexps with
+    | .ok p => pure p
+    | .error e => throwError "failed to parse the Alethe proof: {e}"
+  let realized ← match ← cvc5.run (realize parsed) with
+    | .ok r => pure r
+    | .error e => throwError "cvc5 failed to parse the Alethe proof: {e}"
+  let (r, st) ← (withChoices realized.choices.toList (reconstructProof realized (term := true))).run ctx {}
+  return (r, st.skippedGoals.toList)
 
 end Smt.Alethe

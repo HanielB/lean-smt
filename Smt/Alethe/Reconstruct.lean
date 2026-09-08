@@ -94,6 +94,10 @@ structure DState where
   localInsts : LocalInstances := {}
   /-- Nesting depth of subproofs (0 at the top level). -/
   depth : Nat := 0
+  /-- Build a proof term instead of checking step by step: top-level steps keep their proofs
+      (inlined into later steps) and trusted steps become goals, as in the cvc5 path. Used by the
+      `alethe` tactic, where the kernel checks the closed goal once. -/
+  term : Bool := false
 
 abbrev AletheM := ReaderT (IO.Ref DState) ReconstructM
 
@@ -190,7 +194,13 @@ def addHypothesis (s : Step) : AletheM Expr := do
     (a trusted step becomes `sorry`). -/
 def concludeStep (s : Step) (e? : Option Expr) : AletheM Expr := do
   let st ← getD
-  if st.depth == 0 then
+  if st.depth == 0 && st.term then
+    if s.lits.isEmpty then
+      modifyD fun st => { st with stats := { st.stats with emptyClause := true } }
+    match e? with
+    | some e => countChecked; return e
+    | none => addTrustWith s.concl m!"Alethe step {s.id} ({s.rule})"
+  else if st.depth == 0 then
     if let some e := e? then
       if ← kernelCheck s e then
         countChecked
@@ -345,9 +355,21 @@ where
 
 end
 
+structure ProofResult where
+  /-- The statement `¬ andN [a₁, …, aₙ]` over the problem's assertions. -/
+  type : Expr
+  /-- The assertions `a₁, …, aₙ`. -/
+  asserts : List Expr
+  /-- In term mode, the proof of `type` (with the trusted steps as metavariables). -/
+  proof : Option Expr
+  stats : Stats
+deriving Inhabited
+
 /-- Check a realized proof step by step. Returns the statement `¬ andN [a₁, …, aₙ]` over the
-    problem's assertions (for reporting; it is established iff `stats.valid`) and the statistics. -/
-def reconstructProof (r : Realized) : ReconstructM (Expr × Stats) := do
+    problem's assertions (for reporting; it is established iff `stats.valid`) and the statistics.
+    With `term`, no step is checked on its own; instead the proof term of the statement is
+    returned (its trusted steps are the `skippedGoals` of the state). -/
+def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult := do
   let asserts := r.problem.asserts
   let as ← asserts.mapM fun t => do
     let p : Q(Prop) ← reconstructTerm t
@@ -360,11 +382,19 @@ def reconstructProof (r : Realized) : ReconstructM (Expr × Stats) := do
     let lctx ← getLCtx
     let ref ← IO.mkRef { asserts := asserts.zip (as.zip hs) |>.map fun (t, p, h) => (t, p, h),
                          reconstructors := rs, lctx, baseLctx := lctx,
-                         localInsts := ← Meta.getLocalInstances : DState }
+                         localInsts := ← Meta.getLocalInstances, term : DState }
     runCommands r.proof.cmds ref
     let st ← ref.get
     let ps := listExpr as.toList (mkSort .zero)
     let type := mkApp (mkConst ``Not) (mkApp (mkConst ``andN) ps)
-    return (type, st.stats)
+    let mut proof := none
+    if term && st.stats.emptyClause then
+      -- the empty clause's proof, `False` under the assertion hypotheses
+      if let some p := st.steps.toList.find? (fun (_, p) => p.lits.isEmpty) then
+        let f ← Meta.mkLambdaFVars hs (← instantiateMVars p.2.proof)   -- impliesN as False
+        let hp ← Meta.withLocalDeclD `h (mkApp (mkConst ``andN) ps) fun h =>
+          Meta.mkLambdaFVars #[h] (mkAppN (mkConst ``Builtin.scopes) #[ps, mkConst ``False, f, h])
+        proof := some hp
+    return { type, asserts := as.toList, proof, stats := st.stats }
 
 end Smt.Alethe

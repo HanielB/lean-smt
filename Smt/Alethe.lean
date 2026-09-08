@@ -34,3 +34,5 @@ public import Smt.Alethe.Frontend
 public meta import Smt.Alethe.Frontend
 public import Smt.Alethe.Command
 public meta import Smt.Alethe.Command
+public import Smt.Alethe.Tactic
+public meta import Smt.Alethe.Tactic

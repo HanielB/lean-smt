@@ -413,6 +413,12 @@ def main():
             lines.append(f"  - `{r.name}`: {r.unsupported}")
         lines.append("-/")
         lines.append("")
+    lines.append("/-- The rule file itself, for handing to Carcara (`--rare-file`) from a tactic. -/")
+    lines.append("def ruleFileText : String :=")
+    body = src.read_text()
+    # a raw string literal: the file has no `"#`
+    lines.append('  r#"' + body + '"#')
+    lines.append("")
     lines.append("/-- The rule table, in the order of the rule file. -/")
     lines.append("def rules : Array RareRule := #[")
     entries = []

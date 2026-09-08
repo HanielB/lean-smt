@@ -104,7 +104,8 @@ partial def prepare (i : Nat) : M Unit := do
     for c in cs do prepare c
     let st ← get
     if !isOpen && st.arena.refs[i]! ≥ 2 && !st.named.contains i then
-      let sym := s!"s!{st.fresh}"
+      -- not of the form `x!k`, which the parser gives anchor variables (and `choice!k` symbols)
+      let sym := s!"s~{st.fresh}"
       modify fun st => { st with fresh := st.fresh + 1 }
       let t ← parseText s!"(! {← text i} :named {sym})"
       modify fun st => { st with named := st.named.insert i sym, memo := st.memo.insert i t }
