@@ -56,17 +56,40 @@ def eqSides (t : cvc5.Term) : ReconstructM (cvc5.Term × cvc5.Term) := do
   if t.getKind! != .EQUAL then throwError "expected an equality, got {t}"
   return (t[0]!, t[1]!)
 
+/-- Whether two terms are equal, syntactically or (inside a context with substitutions, where the
+    left-hand side's variables are `let`-bound to the right-hand side's) definitionally. -/
+def termEq (a b : cvc5.Term) : ReconstructM Bool := do
+  if a == b then return true
+  if a.getSort! != b.getSort! then return false
+  Meta.isDefEq (← reconstructTerm a) (← reconstructTerm b)
+
+/-- A proof of `a = b` by `Eq.refl` for terms that are definitionally equal. -/
+def mkEqRefl' (a b : cvc5.Term) : ReconstructM Expr := do
+  let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
+  let x : Q($α) ← reconstructTerm a
+  let y : Q($α) ← reconstructTerm b
+  return ← Meta.mkExpectedTypeHint q(Eq.refl $x) q($x = $y)
+
 /-- A proof of `a = b` from a premise proving either `a = b` or `b = a`. -/
 def orient (pr : Premise) (a b : cvc5.Term) : ReconstructM Expr := do
   let (l, r) ← eqSides pr.lits[0]!
   if l == a && r == b then
     return pr.proof
+  let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort l.getSort!
+  let x : Q($α) ← reconstructTerm l
+  let y : Q($α) ← reconstructTerm r
+  let h : Q($x = $y) := pr.proof
   if l == b && r == a then
-    let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort l.getSort!
-    let x : Q($α) ← reconstructTerm l
-    let y : Q($α) ← reconstructTerm r
-    let h : Q($x = $y) := pr.proof
     return q(Eq.symm $h)
+  -- up to the context's substitutions
+  if (← termEq l a) && (← termEq r b) then
+    let a : Q($α) ← reconstructTerm a
+    let b : Q($α) ← reconstructTerm b
+    return ← Meta.mkExpectedTypeHint h q($a = $b)
+  if (← termEq l b) && (← termEq r a) then
+    let a : Q($α) ← reconstructTerm a
+    let b : Q($α) ← reconstructTerm b
+    return ← Meta.mkExpectedTypeHint q(Eq.symm $h) q($a = $b)
   throwError "premise {pr.lits[0]!} does not prove {a} = {b} in either direction"
 
 /-- A proof of `a = a`. -/
@@ -103,9 +126,21 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
   for i in [start:l.getNumChildren] do
     if l[i]! == r[i]! then
       hs := hs.push (← mkRefl l[i]!)
+    else if let some pr := s.premises.find? (matchesEq · l[i]! r[i]!) then
+      hs := hs.push (← orient pr l[i]! r[i]!)
+    else if ← termEq l[i]! r[i]! then
+      -- equal up to the context's substitutions
+      hs := hs.push (← mkEqRefl' l[i]! r[i]!)
     else
-      let some pr := s.premises.find? (matchesEq · l[i]! r[i]!)
-        | throwError "cong: no premise for {l[i]!} = {r[i]!}"
+      -- a premise equal to the pair up to the substitutions
+      let mut found := none
+      for pr in s.premises do
+        if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
+          let (x, y) ← eqSides pr.lits[0]!
+          if ((← termEq x l[i]!) && (← termEq y r[i]!)) || ((← termEq x r[i]!) && (← termEq y l[i]!)) then
+            found := some pr
+            break
+      let some pr := found | throwError "cong: no premise for {l[i]!} = {r[i]!}"
       hs := hs.push (← orient pr l[i]! r[i]!)
   addTac s.concl (UF.smtCongr · hs)
 
@@ -234,20 +269,22 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let (a, b) ← eqSides s.lits[0]!
     -- a reflexive conclusion (a chain that returns to its start) needs no premise
     if a == b then return ← addThm s.concl (← mkEqRefl a)
-    -- chain the premises from `a`, orienting each one (reflexive premises do not advance it)
+    -- chain the premises from `a`, orienting each one (reflexive premises do not advance it);
+    -- links are matched up to the context's substitutions
     let mut curr := a
     let mut h : Option Expr := none
     for pr in s.premises do
       let (l, r) ← eqSides pr.lits[0]!
       if l == r then continue
-      let next ← if l == curr then pure r else if r == curr then pure l else
+      let next ← if l == curr then pure r else if r == curr then pure l
+        else if ← termEq l curr then pure r else if ← termEq r curr then pure l else
         throwError "trans: premise {pr.lits[0]!} does not continue from {curr}"
       let hstep ← orient pr curr next
       h := some (← match h with
         | none => pure hstep
         | some h₀ => mkTrans a curr next h₀ hstep)
       curr := next
-    if curr != b then throwError "trans: chain ends at {curr}, expected {b}"
+    if curr != b && !(← termEq curr b) then throwError "trans: chain ends at {curr}, expected {b}"
     let some hab := h | throwError "trans without premises"
     addThm s.concl hab
   | "cong" => reconstructCong s

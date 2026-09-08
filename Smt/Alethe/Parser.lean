@@ -21,6 +21,15 @@ Binding constructs are eliminated here, all through one environment:
 * `(! t :named n)` — the annotation is stripped and `n ↦ t` is recorded from that point on;
 * anchor variables `(x S)` and `(:= x t)` — renamed to globally fresh symbols inside the block.
 
+Contexts follow the semantics of "Scalable Fine-Grained Proofs for Formula Processing" (and of
+Carcara): the substitution of the context applies to the left-hand side of a step's equality
+only. Each context therefore carries two environments, the *substituted* one (`vars`, with the
+`(:= x t)` renamings, cumulative and shadowing) and the *fixed* one (`fixed`, the enclosing
+environment plus the context's `(x S)` variables). A unit clause `(= l r)` parses `l` under the
+first and `r` under the second; they coincide wherever no substitution is in scope. A term named
+with `:named` is resolved anew under each environment it is used in, since the same shared term
+can mean different variables on the two sides.
+
 Since terms are arena nodes, substitution never copies a term. Numerals that are not SMT-LIB
 syntax (`-1`, `1/2`) are normalized to applications.
 -/
@@ -31,11 +40,24 @@ namespace Smt.Alethe.Parser
     quantifier binder (so that named terms and `let`s of the same name do not apply). -/
 structure Env where
   vars : Std.HashMap String (Option Nat) := {}
+  /-- The environment of right-hand sides: the context's variables without its substitutions. -/
+  fixed : Std.HashMap String (Option Nat) := {}
+  /-- Identities of the two environments, keys of the `:named` resolution cache. -/
+  id : Nat := 0
+  fixedId : Nat := 0
+
+/-- The environment for the right-hand side of a judgment. -/
+def Env.rhs (env : Env) : Env :=
+  { vars := env.fixed, fixed := env.fixed, id := env.fixedId, fixedId := env.fixedId }
 
 structure State where
   arena : Arena := {}
-  /-- Global table of `:named` terms (name ↦ node). -/
-  named : Std.HashMap String Nat := {}
+  /-- Global table of `:named` terms (name ↦ its S-expression). -/
+  named : Std.HashMap String Sexp := {}
+  /-- Resolutions of named terms per environment (name, environment id ↦ node). -/
+  namedCache : Std.HashMap (String × Nat) Nat := {}
+  /-- Environment identities handed out so far (`0` is the top level). -/
+  envs : Nat := 0
   /-- Anchor variables renamed so far (fresh symbol ↦ original name). -/
   renamed : Array (String × String) := #[]
   fresh : Nat := 0
@@ -98,6 +120,9 @@ def numeral? (s : String) : M (Option Nat) := do
     return none
   | _ => return none
 
+def freshEnvId : M Nat :=
+  modifyGet fun st => (st.envs + 1, { st with envs := st.envs + 1 })
+
 def binderKeywords : List String := ["forall", "exists", "choice", "lambda"]
 
 /-- Replace the bound atoms named in `m` inside node `i` (memoized over the DAG). -/
@@ -127,7 +152,11 @@ partial def term (env : Env) : Sexp → M Nat
     | some (some n) => return n
     | some none => mkAtom s (bound := true)
     | none =>
-      if let some n := (← get).named[s]? then return n
+      if let some n := (← get).namedCache[(s, env.id)]? then return n
+      if let some t := (← get).named[s]? then
+        let n ← term env t
+        modify fun st => { st with namedCache := st.namedCache.insert (s, env.id) n }
+        return n
       if let some (ps, body) := (← get).defs[s]? then
         if ps.isEmpty then return body
       if let some n ← numeral? s then return n
@@ -138,7 +167,8 @@ partial def term (env : Env) : Sexp → M Nat
     let n ← term env t
     let rec go : List Sexp → M Unit
       | .atom ":named" :: .atom name :: rest => do
-        modify fun st => { st with named := st.named.insert name n }
+        modify fun st => { st with named := st.named.insert name t,
+                                   namedCache := st.namedCache.insert (name, env.id) n }
         go rest
       | _ :: rest => go rest
       | [] => return ()
@@ -148,7 +178,7 @@ partial def term (env : Env) : Sexp → M Nat
     let mut env' := env
     for b in bindings do
       match b with
-      | .expr [.atom x, t] => env' := { vars := env'.vars.insert x (some (← term env t)) }
+      | .expr [.atom x, t] => env' := { env' with vars := env'.vars.insert x (some (← term env t)) }
       | _ => throw' s!"ill-formed let binding {b}"
     term env' body
   | .expr [.atom "choice", .expr [.expr [.atom x, sort]], body] => do
@@ -172,7 +202,7 @@ partial def term (env : Env) : Sexp → M Nat
       for v in vars do
         match v with
         | .expr [.atom x, sort] =>
-          env' := { vars := env'.vars.insert x none }
+          env' := { env' with vars := env'.vars.insert x none }
           varNodes := varNodes.push (← mkList #[← mkAtom x (bound := true), ← term {} sort])
         | _ => throw' s!"ill-formed bound variable {v}"
       mkList #[← mkAtom b, ← mkList varNodes, ← term env' body]
@@ -207,20 +237,31 @@ def stepArg (env : Env) : Sexp → M (Arg Nat)
 /-- Parse the arguments of an `anchor`, renaming the variables it introduces. Returns the
     environment for the subproof body. -/
 def anchorArgs (env : Env) (args : List Sexp) : M (Env × Array (Arg Nat)) := do
-  let mut env := env
+  let mut env := { env with id := ← freshEnvId, fixedId := ← freshEnvId }
   let mut out := #[]
   for a in args do
     match a with
     | .expr [.atom x, sort] =>
+      -- a variable of the context: the same on both sides
       let sym ← freshSymbol x
       let v ← mkAtom sym
-      env := { vars := env.vars.insert x (some v) }
+      env := { env with vars := env.vars.insert x (some v), fixed := env.fixed.insert x (some v) }
       out := out.push (.binder x sort v)
     | .expr [.atom ":=", .atom x, t] | .expr [.atom ":=", .expr [.atom x, _], t] =>
+      -- a substitution: `t` under the enclosing substitution, `x` replaced on left-hand sides
+      -- only (on right-hand sides it keeps its enclosing meaning)
       let t ← term env t
+      if env.fixed[x]? == some (some t) then
+        -- `(:= x x)` for the context's own variable `x`: the identity, no renaming needed (veriT
+        -- writes every `bind` this way)
+        env := { env with vars := env.vars.insert x (some t) }
+        continue
       let sym ← freshSymbol x
       let v ← mkAtom sym
-      env := { vars := env.vars.insert x (some v) }
+      -- a right-hand side that mentions `x` although nothing encloses it can only mean the
+      -- replaced variable; resolve it to the substitution rather than to an unknown symbol
+      let fixed := if env.fixed.contains x then env.fixed else env.fixed.insert x (some v)
+      env := { env with vars := env.vars.insert x (some v), fixed }
       out := out.push (.assign x v t)
     | _ => throw' s!"ill-formed anchor argument {a}"
   return (env, out)
@@ -238,7 +279,11 @@ def ids : Sexp → M (Array String)
 /-- Parse `(step id (cl …) :rule r [:premises (…)] [:args (…)] [:discharge (…)])`. -/
 def step (env : Env) : List Sexp → M (StepData Nat)
   | .atom id :: .expr (.atom "cl" :: lits) :: rest => do
-    let cl ← lits.toArray.mapM (term env)
+    let cl ← match lits with
+      -- a judgment `Γ ▷ l ≃ r`: the context's substitution applies to `l` only
+      | [.expr [.atom "=", l, r]] => do
+        pure #[← mkList #[← mkAtom "=", ← term env l, ← term env.rhs r]]
+      | _ => lits.toArray.mapM (term env)
     let mut s : StepData Nat := { id, cl, rule := "" }
     -- keyword arguments in any order
     let mut rest := rest
@@ -266,7 +311,7 @@ def defineFun (f : String) (params : List Sexp) (body : Sexp) : M Unit := do
     match p with
     | .expr [.atom x, _] =>
       ps := ps.push x
-      env := { vars := env.vars.insert x none }
+      env := { env with vars := env.vars.insert x none }
     | _ => throw' s!"ill-formed parameter {p} in the definition of {f}"
   let b ← term env body
   modify fun st => { st with defs := st.defs.insert f (ps, b) }

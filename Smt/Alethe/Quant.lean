@@ -175,8 +175,9 @@ partial def refuteGuard (x t hnx : Expr) (e : Expr) : MetaM Expr := do
         let some hg ← guardOf x t hp p | throwError "onepoint: no guard under the negation {e}"
         Meta.mkLambdaFVars #[hp] (mkApp hnx hg)
     if let some (a, b) := e.app2? ``Or then
-      if hasGuard a then return ← Meta.mkAppM ``Or.inl #[← refuteGuard x t hnx a]
-      if hasGuard b then return ← Meta.mkAppM ``Or.inr #[← refuteGuard x t hnx b]
+      -- (`mkAppM` cannot infer the other disjunct)
+      if hasGuard a then return mkApp3 (mkConst ``Or.inl) a b (← refuteGuard x t hnx a)
+      if hasGuard b then return mkApp3 (mkConst ``Or.inr) a b (← refuteGuard x t hnx b)
       throwError "onepoint: no guard in {e}"
     if let some (a, b) := e.and? then
       return ← Meta.mkAppM ``And.intro #[← refuteGuard x t hnx a, ← refuteGuard x t hnx b]
