@@ -116,7 +116,10 @@ def solveAletheExternal (exe : String) (query : String) (timeout : Option Nat)
   | some "unsat" => return .unsat ("\n".intercalate (lines.drop 1))
   | some "sat" => return .sat
   | some "unknown" => return .unknown out.stderr
-  | _ => throwError "cvc5 failed (exit code {out.exitCode}):\n{out.stdout}\n{out.stderr}"
+  | _ =>
+    -- a resource limit aborts cvc5 (exit code 134) with a message on stderr
+    if (out.stderr.splitOn "interrupted by timeout").length > 1 then return .unknown "TIMEOUT"
+    throwError "cvc5 failed (exit code {out.exitCode}):\n{out.stdout}\n{out.stderr}"
 
 /-- The Alethe printer of the cvc5 build lean-cvc5 ships (1.3.2) predates part of the current
     Alethe vocabulary: it prints some rules as `rare_rewrite`s of rules that do not exist

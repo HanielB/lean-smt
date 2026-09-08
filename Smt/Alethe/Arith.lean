@@ -364,7 +364,9 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
         addThm s.concl (← Meta.mkAppM ``And.intro #[pos, neg])
       else
         -- division by a constant: (and (<= (* b (div a b)) a) (< a (* b (+ (div a b) ±1))))
-        addTac s.concl fun mv => Lean.Elab.Tactic.Omega.omega [] mv {}
+        addTac s.concl fun mv => do
+          let some g ← mv.falseOrByContra | return
+          g.withContext do Lean.Elab.Tactic.Omega.omega (← Lean.getLocalHyps).toList g {}
     | .IMPLIES =>
       -- (=> (not (= b 0)) (= (* b (/ a b)) a)), real division
       let div := t[1]![0]![1]!

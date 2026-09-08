@@ -232,11 +232,14 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       addThm s.concl q(Prop.impliesElim (@Eq.symm $α $x $y))
   | "trans" =>
     let (a, b) ← eqSides s.lits[0]!
-    -- chain the premises from `a`, orienting each one
+    -- a reflexive conclusion (a chain that returns to its start) needs no premise
+    if a == b then return ← addThm s.concl (← mkEqRefl a)
+    -- chain the premises from `a`, orienting each one (reflexive premises do not advance it)
     let mut curr := a
     let mut h : Option Expr := none
     for pr in s.premises do
       let (l, r) ← eqSides pr.lits[0]!
+      if l == r then continue
       let next ← if l == curr then pure r else if r == curr then pure l else
         throwError "trans: premise {pr.lits[0]!} does not continue from {curr}"
       let hstep ← orient pr curr next
