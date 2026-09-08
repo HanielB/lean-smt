@@ -118,30 +118,40 @@ def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
       xs.foldrM f (q(¬$b), b, h)
     addThm q($p = ¬$q) q(@Eq.symm Prop (¬$q) $p $h)
   | .QUANT_UNUSED_VARS =>
-    let mut ys := #[]
-    if rw.result[1]!.getKind! == .FORALL then
-      for y in rw.result[1]![0]! do
-        ys := ys.push (getVariableName y, fun _ => reconstructSort y.getSort!)
-    let (_, p, q, h) ← Meta.withLocalDeclsD ys fun ys => withNewTermCache do
-      let b : Q(Prop) ← reconstructTerm rw.result[0]![1]!
-      let h : Q($b = $b) := q(Eq.refl $b)
-      let f := fun i (j, p, q, (h : Q($p = $q))) => do
-        let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort rw.result[0]![0]![i]!.getSort!
-        if let some j := j then
-          if rw.result[0]![0]![i]! == rw.result[1]![0]![j]! then
-            let lp : Q($α → Prop) ← Meta.mkLambdaFVars #[ys[j]!] p
-            let lq : Q($α → Prop) ← Meta.mkLambdaFVars #[ys[j]!] q
-            let hx : Q(∀ x : $α, $lp x = $lq x) ← Meta.mkLambdaFVars #[ys[j]!] h
-            let ap ← Meta.mkForallFVars #[ys[j]!] p
-            let aq ← Meta.mkForallFVars #[ys[j]!] q
-            return (if j == 0 then none else some (j - 1), ap, aq, q(forall_congr $hx))
-        let hα : Q(Nonempty $α) ← Meta.synthInstance q(Nonempty $α)
-        let ap := .forallE (getVariableName rw.result[0]![0]![i]!) α p .default
-        return (j, ap, q, q(@forall_const_eq $α $hα $p $q $h))
-      let i := rw.result[0]![0]!.getNumChildren
-      let j := if ys.isEmpty then none else some (ys.size - 1)
-      (List.range i).foldrM f (j, b, b, h)
-    addThm q($p = $q) h
+    -- `(∀ xs, φ) = (∀ ys, φ)` with `ys ⊆ xs`. A prefix may bind the same variable more than once
+    -- (cvc5 reuses the variable node for a name, so `(forall ((x S) (y S) (x S)) φ)` occurs); the
+    -- reconstruction of the body then refers to the innermost binder of each name, whereas cvc5
+    -- keeps the variables in the order of their first occurrence. So instead of a binder-wise
+    -- `forall_congr` chain, each side is instantiated from the binders of the other: a kept
+    -- binder receives the other side's variable, a dropped one an arbitrary inhabitant.
+    let lhs := rw.result[0]!
+    let rhs := rw.result[1]!
+    let l : Q(Prop) ← reconstructTerm lhs
+    let r : Q(Prop) ← reconstructTerm rhs
+    let xs := lhs[0]!.getChildren
+    let ys := if rhs.getKind! == .FORALL then rhs[0]!.getChildren else #[]
+    let decls (vs : Array cvc5.Term) := vs.map fun v =>
+      (getVariableName v, fun (_ : Array Expr) => reconstructSort v.getSort!)
+    -- the innermost binder of `v` in `vs`: the one its occurrences in the body refer to
+    let innermost (vs : Array cvc5.Term) (v : cvc5.Term) : Option Nat :=
+      (List.range vs.size).reverse.find? (vs[·]! == v)
+    let arbitrary (v : cvc5.Term) : ReconstructM Expr := do
+      let (u, α) ← reconstructSortLevelAndSort v.getSort!
+      let hα ← Meta.synthInstance (mkApp (mkConst ``Nonempty [u]) α)
+      return mkApp2 (mkConst ``Classical.choice [u]) α hα
+    let mp : Q($l → $r) ← Meta.withLocalDeclD `h l fun h => Meta.withLocalDeclsD (decls ys) fun yfs => do
+      let args ← xs.mapIdxM fun i x => do
+        match ys.findIdx? (· == x) with
+        | some k => if innermost xs x == some i then pure yfs[k]! else arbitrary x
+        | none => arbitrary x
+      Meta.mkLambdaFVars (#[h] ++ yfs) (mkAppN h args)
+    let mpr : Q($r → $l) ← Meta.withLocalDeclD `h r fun h => Meta.withLocalDeclsD (decls xs) fun xfs => do
+      let args ← ys.mapM fun y => do
+        let some i := innermost xs y
+          | throwError "QUANT_UNUSED_VARS: variable {y} of the result is not bound in {lhs}"
+        pure xfs[i]!
+      Meta.mkLambdaFVars (#[h] ++ xfs) (mkAppN h args)
+    addThm q($l = $r) q(propext (Iff.intro $mp $mpr))
   | .QUANT_MERGE_PRENEX =>
     let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort rw.result[0]!.getSort!
     let t  : Q($α) ← reconstructTerm rw.result[0]!

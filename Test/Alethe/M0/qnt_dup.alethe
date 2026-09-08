@@ -1,0 +1,5 @@
+(assume a0 (! (forall ((x U) (y U) (y U) (x U)) (p x y)) :named @p_0))
+(assume a1 (! (not (! (forall ((x U) (y U)) (p x y)) :named @p_2)) :named @p_1))
+(step t1 (cl (not (! (= @p_0 @p_2) :named @p_3)) (not @p_0) @p_2) :rule equiv_pos2)
+(step t0 (cl @p_3) :rule qnt_rm_unused)
+(step t2 (cl) :rule resolution :premises (t1 t0 a0 a1) :args (@p_3 (! false :named @p_4) @p_0 @p_4 @p_2 true))
