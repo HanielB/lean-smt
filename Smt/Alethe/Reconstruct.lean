@@ -262,12 +262,15 @@ def runStepData (d : StepData cvc5.Term) : AletheM Unit := do
       progressLine s!"[alethe] step {n}: {d.id} ({d.rule}, {d.cl.size} literals) at {← IO.monoMsNow} ms"
   let t₀ ← IO.monoMsNow
   let s ← mkStep d
-  let e ← concludeStep s (← reconstructStep s)
+  let t₁ ← IO.monoMsNow
+  let e ← reconstructStep s
+  let t₂ ← IO.monoMsNow
+  let e ← concludeStep s e
   registerPremise { id := d.id, lits := d.cl, concl := s.concl, proof := e }
   if every > 0 then
     let dt := (← IO.monoMsNow) - t₀
     if dt ≥ 200 then
-      progressLine s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {dt} ms"
+      progressLine s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {dt} ms (mkStep {t₁-t₀}, reconstruct {t₂-t₁}, conclude {(← IO.monoMsNow)-t₂})"
 
 /-- A top-level `assume`: bind it to the assertion with the same term. A reflexive equality is
     accepted without an assertion: it is how a `define-fun` of the problem surfaces once the

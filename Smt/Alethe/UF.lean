@@ -290,7 +290,17 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls rps h)
     addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
   | "aci_simp" =>
-    addTac s.concl Meta.AC.rewriteUnnormalizedTop
+    -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation);
+    -- other operators (`+`, `*`) and anything the normalizer rejects fall back to AC rewriting.
+    let some (_, l, r) := s.concl.eq? | addTac s.concl Meta.AC.rewriteUnnormalizedTop
+    if (Prop.AciNorm.topConnective? l r).isSome then
+      try
+        addThm s.concl (← Prop.AciNorm.proveEq l r)
+      catch e =>
+        trace[smt.alethe.step] "aci_simp: AciNorm failed ({e.toMessageData}), falling back to AC"
+        addTac s.concl Meta.AC.rewriteUnnormalizedTop
+    else
+      addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "evaluate" =>
     let (l, r) ← eqSides s.lits[0]!
     let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort l.getSort!

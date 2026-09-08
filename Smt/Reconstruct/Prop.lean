@@ -17,6 +17,8 @@ public import Smt.Reconstruct.Prop.Lemmas
 public meta import Smt.Reconstruct.Prop.Lemmas
 public import Smt.Reconstruct.Prop.Rewrites
 public meta import Smt.Reconstruct.Prop.Rewrites
+public import Smt.Reconstruct.Prop.AciNorm
+public meta import Smt.Reconstruct.Prop.AciNorm
 
 public meta section
 

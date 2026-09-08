@@ -19,6 +19,8 @@ public import Smt.Reconstruct.Builtin.Rewrites
 public meta import Smt.Reconstruct.Builtin.Rewrites
 public import Smt.Reconstruct.Builtin.Tactic
 public meta import Smt.Reconstruct.Builtin.Tactic
+public import Smt.Reconstruct.Prop.AciNorm
+public meta import Smt.Reconstruct.Prop.AciNorm
 
 public meta section
 
@@ -189,7 +191,15 @@ def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
       else
         addThm q($t = $t') (← decide q($t = $t') hp)
   | .ACI_NORM =>
-    addTac (← reconstructTerm pf.getResult) Meta.AC.rewriteUnnormalizedTop
+    -- an `∧`/`∨` layer is normalized by the verified `AciNorm` normalizer (kernel evaluation);
+    -- other operators and anything it rejects fall back to AC rewriting
+    let eq ← reconstructTerm pf.getResult
+    let some (_, l, r) := eq.eq? | addTac eq Meta.AC.rewriteUnnormalizedTop
+    if (Prop.AciNorm.topConnective? l r).isSome then
+      try addThm eq (← Prop.AciNorm.proveEq l r)
+      catch _ => addTac eq Meta.AC.rewriteUnnormalizedTop
+    else
+      addTac eq Meta.AC.rewriteUnnormalizedTop
   | .ABSORB =>
     let e ← reconstructTerm pf.getResult[0]!
     let z ← reconstructTerm pf.getResult[1]!
