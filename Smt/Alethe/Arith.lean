@@ -116,6 +116,17 @@ partial def linComb (t : cvc5.Term) : LinComb :=
     | _ => { coeffs := (∅ : Std.HashMap cvc5.Term Rat).insert t 1 }
   | _ => { coeffs := (∅ : Std.HashMap cvc5.Term Rat).insert t 1 }
 
+/-- The gcd of the variable coefficients and the constant of a combination, `1` unless they are
+    all integers (Carcara's `coefficients_gcd`). -/
+def gcdWithConst (p : LinComb) : Int := Id.run do
+  if p.const.den != 1 then return 1
+  let mut g : Nat := p.const.num.natAbs
+  for (_, c) in p.coeffs.toList do
+    if c == 0 then continue
+    if c.den != 1 then return 1
+    g := Nat.gcd g c.num.natAbs
+  return if g == 0 then 1 else g
+
 /-- The linear combination `lhs - rhs` and relation of a (possibly negated) literal, as the bound
     obtained by *negating* the literal: `¬(a < b)` gives `b ≤ a`, etc. -/
 def negatedLiteral (l : cvc5.Term) : Option (Rel × cvc5.Term × cvc5.Term) :=
@@ -229,8 +240,10 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
       let mut p := (linComb a).add (linComb b).neg  -- a - b ⋈ 0
       let mut r := r
       if int && r == .lt then
-        -- a < b  ⟹  a + 1 ≤ b
-        p := { p with const := p.const + 1 }
+        -- a < b  ⟹  a + g ≤ b, g the gcd of the coefficients and the (floored) constant, as
+        -- Carcara strengthens (`+1` when the constant is not an integer)
+        let g := gcdWithConst p
+        p := { p with const := (Rat.floor p.const : Int) + g }
         r := .le
       comb := comb.add (p.scale c)
       rel := relJoin rel r
@@ -281,9 +294,32 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
             let (x, y) := (ty.appFn!.appArg!, ty.appArg!)
             h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM n #[x, y], h]
       let mut bd ← boundOf h
-      -- strengthen strict integer bounds
+      -- strengthen strict integer bounds: a < b ⟹ a + g ≤ b, with g the gcd of the coefficients
+      -- and constant of b - a (`1` otherwise), justified by b - a = g · L for an integer L
       if int && r == .lt then
-        h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM ``Int.add_one_le_iff #[bd.a, bd.b], h]
+        let some (_, a, b) := negatedLiteral l | unreachable!
+        let p := (linComb a).add (linComb b).neg  -- a - b (< 0)
+        let g := gcdWithConst p
+        if g > 1 then
+          -- L := Σ (-cᵢ/g)·xᵢ + (-k/g), so that b - a = g * L
+          let mut lterm : Expr := numeral names (-p.const / g)
+          for (t, c) in p.coeffs.toList do
+            if c == 0 then continue
+            let x ← reconstructTerm t
+            lterm ← Meta.mkAppM ``HAdd.hAdd #[lterm, ← Meta.mkAppM ``HMul.hMul #[numeral names (-c / g), x]]
+          let ge := numeral names g
+          let eqGoal ← Meta.mkAppM ``Eq #[← Meta.mkAppM ``HSub.hSub #[bd.b, bd.a], ← Meta.mkAppM ``HMul.hMul #[ge, lterm]]
+          let heq ← Meta.mkFreshExprMVar eqGoal
+          names.polyNorm heq.mvarId!
+          let goal ← Meta.mkAppM ``LE.le #[← Meta.mkAppM ``HAdd.hAdd #[bd.a, ge], bd.b]
+          let hg ← Meta.mkFreshExprMVar goal
+          try
+            let some g₀ ← hg.mvarId!.falseOrByContra | pure ()
+            g₀.withContext do Lean.Elab.Tactic.Omega.omega ([h, heq] ++ (← Lean.getLocalHyps).toList) g₀ {}
+          catch ex => throwError "la_generic: strengthening by {g} failed: {ex.toMessageData}"
+          h ← instantiateMVars hg
+        else
+          h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM ``Int.add_one_le_iff #[bd.a, bd.b], h]
         bd ← boundOf h
       -- scale
       if c != 1 then

@@ -238,6 +238,14 @@ theorem orN_forall {α : Sort u} : ∀ (ps : List Prop) {ψ : α → Prop},
         rw [List.cons_append, orN_cons_append] at hx
         exact hx.resolve_left hnp)
 
+/-! Integer strengthening in `la_generic`: a bound whose coefficients share a factor `g` is divided
+by `g`, its constant rounded. -/
+
+theorem le_of_sub_eq_sub {a b c d : Int} (h : a ≤ b) (heq : a - b = c - d) : c ≤ d := by omega
+theorem eq_of_sub_eq_sub {a b c d : Int} (h : a = b) (heq : a - b = c - d) : c = d := by omega
+theorem le_of_le_of_eq' {a b c : Int} (h : a ≤ b) (e : b = c) : a ≤ c := e ▸ h
+theorem eq_of_eq_of_eq' {a b c : Int} (h : a = b) (e : b = c) : a = c := e ▸ h
+
 /-! The `div_intro` and `div_by_zero_intro` rules (cvc5's introduction of integer division and
 of division by a possibly-zero denominator). -/
 

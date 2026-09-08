@@ -44,6 +44,9 @@ structure State where
   /-- The epsilon symbols introduced for `choice` terms, per sort: symbol and sort. -/
   choices : Array (String × Sexp) := #[]
   choiceOfSort : Std.HashMap String String := {}
+  /-- The logic has reals but no integers: integer numerals denote reals, as cvc5's and Carcara's
+      parsers read them (the realization parses under `HO_ALL`, where they would be integers). -/
+  realNumerals : Bool := false
 
 abbrev M := StateT State (Except String)
 
@@ -83,7 +86,7 @@ def numeral? (s : String) : M (Option Nat) := do
   let neg := s.startsWith "-"
   let body := if neg then (s.drop 1).toString else s
   let mkNum (t : String) : M Nat := do
-    let n ← mkAtom t
+    let n ← mkAtom (if (← get).realNumerals && isDigits t then t ++ ".0" else t)
     if neg then mkList #[← mkAtom "-", n] else return n
   match body.splitOn "/" with
   | [a, b] =>
@@ -128,6 +131,7 @@ partial def term (env : Env) : Sexp → M Nat
       if let some (ps, body) := (← get).defs[s]? then
         if ps.isEmpty then return body
       if let some n ← numeral? s then return n
+      if (← get).realNumerals && isDigits s then return ← mkAtom (s ++ ".0")
       mkAtom s
   | .expr [] => mkList #[]
   | .expr (.atom "!" :: t :: attrs) => do
@@ -191,6 +195,8 @@ def isStrLit (s : String) : Bool :=
 def stepArg (env : Env) : Sexp → M (Arg Nat)
   | .atom s => do
     if isStrLit s then return .str ((s.drop 1).dropEnd 1).toString
+    -- a bare numeral argument is an index or a coefficient, never a real of the problem
+    if isDigits s then return .term (← mkAtom s)
     return .term (← term env (.atom s))
   | .expr [.atom ":=", .atom x, t] => do
     return .assign x (← term env (.atom x)) (← term env t)
@@ -317,6 +323,12 @@ def problem (cmds : List Sexp) : M (List Sexp × Array Nat) := do
     | .expr [.atom "define-fun", .atom f, .expr params, _, body] => defineFun f params body
     | .expr [.atom "assert", t] =>
       asserts := asserts.push (← term {} t)
+    | .expr [.atom "set-logic", .atom l] =>
+      -- real arithmetic without integers: `20` is the real `20.0`
+      let real := (l.splitOn "RA").length > 1 || (l.splitOn "RDL").length > 1
+      let int := (l.splitOn "IA").length > 1 || (l.splitOn "IDL").length > 1 || (l.splitOn "IRA").length > 1
+      modify fun st => { st with realNumerals := real && !int }
+      forwarded := forwarded.push c
     | _ => forwarded := forwarded.push c
   return (forwarded.toList, asserts)
 
