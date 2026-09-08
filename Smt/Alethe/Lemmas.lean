@@ -238,6 +238,30 @@ theorem orN_forall {α : Sort u} : ∀ (ps : List Prop) {ψ : α → Prop},
         rw [List.cons_append, orN_cons_append] at hx
         exact hx.resolve_left hnp)
 
+/-! The `div_intro` and `div_by_zero_intro` rules (cvc5's introduction of integer division and
+of division by a possibly-zero denominator). -/
+
+theorem div_intro_pos {a b : Int} (h : b > 0) : b * (a / b) ≤ a ∧ a < b * (a / b + 1) :=
+  ⟨Int.mul_ediv_self_le (Int.ne_of_gt h), by
+    rw [Int.mul_add, Int.mul_one]; exact Int.lt_mul_ediv_self_add h⟩
+
+theorem div_intro_neg {a b : Int} (h : b < 0) : b * (a / b) ≤ a ∧ a < b * (a / b + -1) := by
+  have hc : -b > 0 := by omega
+  have h1 := Int.mul_ediv_self_le (x := a) (Int.ne_of_gt hc)
+  have h2 := Int.lt_mul_ediv_self_add (x := a) hc
+  rw [Int.ediv_neg, Int.neg_mul_neg] at h1 h2
+  exact ⟨h1, by rw [Int.mul_add, Int.mul_neg, Int.mul_one]; exact h2⟩
+
+theorem div_intro_real {a b : Rat} (h : ¬b = 0) : b * (a / b) = a := by
+  rw [Rat.mul_comm]; exact Rat.div_mul_cancel h
+
+theorem div_by_zero_intro {α : Sort u} {β : Sort v} (inst : Nonempty α) (f : β → α) (b z : β)
+    [Decidable (b = z)] : f b = ite (b = z) (@Classical.epsilon α inst fun y => y = f z) (f b) := by
+  by_cases h : b = z
+  · rw [if_pos h, h]
+    exact (Classical.epsilon_spec_aux inst (fun y => y = f z) ⟨f z, rfl⟩).symm
+  · rw [if_neg h]
+
 /-! The `connective_def` rule. -/
 
 theorem connective_def_xor (a b : Prop) : XOr a b = ((¬a ∧ b) ∨ (a ∧ ¬b)) :=

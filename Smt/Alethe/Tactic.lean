@@ -50,6 +50,11 @@ register_option smt.alethe.coreRules : String := {
   descr := "the rules Carcara's core pass reduces in the `alethe` tactic (`--core-rules`)"
 }
 
+register_option smt.alethe.cvc5 : String := {
+  defValue := ""
+  descr := "a cvc5 executable to run instead of the in-process solver (its Alethe printer is used as is; the in-process cvc5 is the 1.3.2 build of lean-cvc5)"
+}
+
 register_option smt.alethe.keepFiles : Bool := {
   defValue := false
   descr := "keep the temporary problem and proof files of the `alethe` tactic (paths in the `smt.alethe` trace)"
@@ -89,6 +94,29 @@ def solveAlethe (query : String) (timeout : Option Nat) (options : List (String 
       return .sat
     else
       return .unknown res.getUnknownExplanation.toString
+
+/-- Run an external cvc5 on the query with the same options as the in-process solver (as command
+    line flags) and `--dump-proofs`. -/
+def solveAletheExternal (exe : String) (query : String) (timeout : Option Nat)
+    (options : List (String × String)) : MetaM SolveResult := do
+  let (h, path) ← IO.FS.createTempFile
+  h.putStr (query ++ "\n(check-sat)\n"); h.flush
+  let flag : String × String → String
+    | (o, "true") => s!"--{o}"
+    | (o, "false") => s!"--no-{o}"
+    | (o, v) => s!"--{o}={v}"
+  let args := #["--dump-proofs"] ++ options.toArray.map flag
+    ++ (match timeout with | some t => #[s!"--tlimit={1000 * t}"] | none => #[]) ++ #[path.toString]
+  trace[smt.alethe] "{exe} {args}"
+  let out ← try IO.Process.output { cmd := exe, args } catch e =>
+    throwError "could not run cvc5 (`{exe}`): {e.toMessageData}"
+  unless smt.alethe.keepFiles.get (← getOptions) do IO.FS.removeFile path
+  let lines := out.stdout.splitOn "\n"
+  match lines[0]? with
+  | some "unsat" => return .unsat ("\n".intercalate (lines.drop 1))
+  | some "sat" => return .sat
+  | some "unknown" => return .unknown out.stderr
+  | _ => throwError "cvc5 failed (exit code {out.exitCode}):\n{out.stdout}\n{out.stderr}"
 
 /-- The Alethe printer of the cvc5 build lean-cvc5 ships (1.3.2) predates part of the current
     Alethe vocabulary: it prints some rules as `rare_rewrite`s of rules that do not exist
@@ -188,17 +216,25 @@ def alethe (cfg : Config) (mv : MVarId) (hs : Array Expr) : MetaM Result := mv.w
     return .unsat [mv] hs₁
   trace[smt.alethe] "goal: {goalType}\nquery:\n{query}"
   let options := defaultSolverOptions ++ aletheSolverOptions ++ cfg.extraSolverOptions
-  match ← solveAlethe query cfg.timeout options with
-  | .error e => throwError e.toString
-  | .ok .sat => return .sat none
-  | .ok (.unknown r) => return .unknown r
-  | .ok (.unsat proofText) =>
+  let external := smt.alethe.cvc5.get (← getOptions)
+  let res ← if external == "" then
+      match ← solveAlethe query cfg.timeout options with
+      | .error e => throwError e.toString
+      | .ok r => pure r
+    else
+      solveAletheExternal external query cfg.timeout options
+  match res with
+  | .sat => return .sat none
+  | .unknown r => return .unknown r
+  | .unsat proofText =>
     trace[smt.alethe] "cvc5 proof:\n{proofText}"
     -- cvc5 prints `(error "…")` when its proof cannot be expressed in Alethe
     if let [_, second] := ((proofText.splitOn "\n").filter (· ≠ "")).take 2 then
       if second.startsWith "(error " then
         throwError "cvc5 cannot print this proof in Alethe: {second}"
-    let elaborated ← runCarcara query (compatProof proofText)
+    -- the shim is for the in-process 1.3.2 printer only
+    let proofText := if external == "" then compatProof proofText else proofText
+    let elaborated ← runCarcara query proofText
     trace[smt.alethe] "elaborated proof:\n{elaborated}"
     let ctx : Reconstruct.Context := { userNames := fvNames₂, native := cfg.native }
     let (r, mvs) ← reconstructAletheText query elaborated ctx

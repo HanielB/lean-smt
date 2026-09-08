@@ -324,8 +324,11 @@ def reconstructMulAbsComparison (pf : cvc5.Proof) : ReconstructM (Option Expr) :
   let (ks, ls, rs, hs) ← pf.getChildren[1:].foldlM f (k, ls, rs, hs)
   addThm (if ks == .EQUAL then q($ls = $rs) else q($ls > $rs)) hs
 
-def reconstructMulSign (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
-  let ts := if pf.getResult[0]!.getKind! == .AND then pf.getResult[0]!.getChildren else #[pf.getResult[0]!]
+/-- `ARITH_MULT_SIGN` / Alethe `la_mult_sign` on terms: from the sign hypotheses `hyps` (a
+    conjunction, or one comparison) conclude the sign of the monomial `concl`. Returns the
+    statement `andN hyps → concl` and its proof. -/
+def reconstructMulSignTerms (hyps concl : cvc5.Term) : ReconstructM (Expr × Expr) := do
+  let ts := if hyps.getKind! == .AND then hyps.getChildren else #[hyps]
   let mut hs : Array (Name × (Array Expr → ReconstructM Expr)) := #[]
   let mut map : Std.HashMap cvc5.Term Nat := {}
   for h : i in [0:ts.size] do
@@ -333,7 +336,7 @@ def reconstructMulSign (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
     let p : Q(Prop) ← reconstructTerm t
     hs := hs.push (Name.num `a i, fun _ => return p)
     map := map.insert (if t.getKind! == .NOT then t[0]![0]! else t[0]!) i
-  let t := pf.getResult[1]!
+  let t := concl
   let vs := if t[0]!.getKind! == .CONST_INTEGER then t[1]!.getChildren else t[0]!.getChildren
   let f t ps := do
     let p : Q(Prop) ← reconstructTerm t
@@ -349,7 +352,7 @@ def reconstructMulSign (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
         let a : Q(Int) ← reconstructTerm vs[0]!
         go vs ts hs map ts[map[vs[0]!]!]!.getKind! a hs[map[vs[0]!]!]! 1
     Meta.mkLambdaFVars hs h
-  addThm q(andN $ps → $q) q(Builtin.scopes $h)
+  return (q(andN $ps → $q), q(Builtin.scopes $h))
 where
   go vs ts hs map (ka : cvc5.Kind) (a : Q(Int)) (ha : Expr) i : ReconstructM Expr := do
     if hi : i < vs.size then
@@ -383,6 +386,10 @@ where
         throwError "[mul_sign]: invalid kinds: {ka}, {k}"
     else
       return ha
+
+def reconstructMulSign (pf : cvc5.Proof) : ReconstructM (Option Expr) := do
+  let (t, h) ← reconstructMulSignTerms pf.getResult[0]! pf.getResult[1]!
+  addThm t h
 
 /-- The value of an integer constant written as a literal or a negated literal (Alethe proofs write
     `(- 1)`); `0` if it is not one. -/

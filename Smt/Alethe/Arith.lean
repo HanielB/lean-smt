@@ -268,6 +268,18 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
             | _ => throwError "la_generic: unexpected literal {l}"
           Meta.mkAppM ``Iff.mp #[← Meta.mkAppOptM n #[a, b], hneg]
         | _ => throwError "la_generic: unexpected literal {l}"
+      -- an integer literal in a rational combination: cast the bound to `Rat`
+      if !int then
+        if let some (_, a, b) := negatedLiteral l then
+          if a.getSort!.isInteger && b.getSort!.isInteger then
+            let ty ← Meta.whnfR (← Meta.inferType h)
+            let n ← match ty.getAppFn.constName? with
+              | some ``LE.le => pure ``Rat.intCast_le_intCast
+              | some ``LT.lt => pure ``Rat.intCast_lt_intCast
+              | some ``Eq => pure ``Rat.intCast_inj
+              | _ => throwError "la_generic: unexpected integer bound {ty}"
+            let (x, y) := (ty.appFn!.appArg!, ty.appArg!)
+            h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM n #[x, y], h]
       let mut bd ← boundOf h
       -- strengthen strict integer bounds
       if int && r == .lt then
@@ -331,6 +343,52 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
     let n : Name := (if int then `Smt.Alethe.Int else `Smt.Alethe.Rat) ++ `la_rw_eq
     let arg := if int then reconstructTerm else ratArg
     addThm s.concl (← Meta.mkAppOptM n #[← arg eq[0]!, ← arg eq[1]!])
+  | "la_mult_sign" =>
+    -- (cl (=> hyps (⋈ monomial 0))): the sign of a monomial from the signs of its factors
+    let t := s.lits[0]!
+    if t.getKind! != .IMPLIES then throwError "la_mult_sign: expected an implication"
+    let (_, h) ← if allInt #[t[1]!] then Int.reconstructMulSignTerms t[0]! t[1]!
+      else Rat.reconstructMulSignTerms t[0]! t[1]!
+    addThm s.concl h
+  | "div_intro" =>
+    let t := s.lits[0]!
+    match t.getKind! with
+    | .AND =>
+      if t[0]!.getKind! == .IMPLIES then
+        -- (and (=> (> b 0) (and …)) (=> (< b 0) (and …))): the bounds under each sign of `b`
+        let bound := t[0]![1]![0]!   -- (<= (* b (div a b)) a)
+        let b ← reconstructTerm bound[0]![0]!
+        let a ← reconstructTerm bound[1]!
+        let pos ← Meta.mkAppOptM ``div_intro_pos #[a, b]
+        let neg ← Meta.mkAppOptM ``div_intro_neg #[a, b]
+        addThm s.concl (← Meta.mkAppM ``And.intro #[pos, neg])
+      else
+        -- division by a constant: (and (<= (* b (div a b)) a) (< a (* b (+ (div a b) ±1))))
+        addTac s.concl fun mv => Lean.Elab.Tactic.Omega.omega [] mv {}
+    | .IMPLIES =>
+      -- (=> (not (= b 0)) (= (* b (/ a b)) a)), real division
+      let div := t[1]![0]![1]!
+      if div[0]!.getSort!.isInteger || div[1]!.getSort!.isInteger then
+        throwError "div_intro: real division of integer terms is not supported"
+      let a ← reconstructTerm div[0]!
+      let b ← reconstructTerm div[1]!
+      addThm s.concl (← Meta.mkAppOptM ``div_intro_real #[a, b])
+    | _ => throwError "div_intro: unexpected shape {t}"
+  | "div_by_zero_intro" =>
+    -- (= (op a b) (ite (= b 0) (choice ((y T)) (= y (op a 0))) (op a b)))
+    let t := s.lits[0]!
+    let lhs ← reconstructTerm t[0]!
+    let b ← reconstructTerm t[0]![1]!
+    let z ← reconstructTerm t[1]![0]![1]!
+    let rhs ← reconstructTerm t[1]!
+    -- the `Nonempty` instance of the reconstructed epsilon term
+    let iteArgs := rhs.getAppArgs
+    unless iteArgs.size == 5 do throwError "div_by_zero_intro: unexpected right-hand side {rhs}"
+    let epsArgs := iteArgs[3]!.getAppArgs
+    unless epsArgs.size == 3 do throwError "div_by_zero_intro: unexpected epsilon term {iteArgs[3]!}"
+    let inst := epsArgs[1]!
+    let f := Expr.lam `x (← Meta.inferType b) (lhs.abstract #[b]) .default
+    addThm s.concl (← Meta.mkAppOptM ``div_by_zero_intro #[none, none, inst, f, b, z, none])
   | "la_mult_pos" => reconstructLaMult s true
   | "la_mult_neg" => reconstructLaMult s false
   | "la_disequality" | "la_totality" =>
