@@ -252,8 +252,43 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     addThm s.concl hab
   | "cong" => reconstructCong s
   | "distinct_elim" =>
-    let (l, _) ← eqSides s.lits[0]!
-    addThm s.concl (← mkRefl l)
+    -- (= (distinct xs) (and (not (= xᵢ xⱼ)) …)): definitional when the pairs come in the order
+    -- and orientation of the reconstruction; otherwise match the pairs up to symmetry
+    let (l, r) ← eqSides s.lits[0]!
+    let le ← reconstructTerm l
+    let re ← reconstructTerm r
+    if ← Meta.isDefEq le re then return ← addThm s.concl (← mkRefl l)
+    let pairOf (e : Expr) : Option (Expr × Expr) :=
+      match e.ne? with
+      | some (_, a, b) => some (a, b)
+      | none => match e.not? >>= Expr.eq? with
+        | some (_, a, b) => some (a, b)
+        | none => none
+    let ls ← collectPropsInAndChain le
+    let rs ← collectPropsInAndChain re
+    let lps := listExpr ls (mkSort .zero)
+    let rps := listExpr rs (mkSort .zero)
+    -- from `h : andN src` prove `andN tgt`, pairing each target conjunct with a source one
+    let convert (src tgt : List Expr) (sps : Expr) (h : Expr) : ReconstructM Expr := do
+      let mut proofs := #[]
+      for t in tgt do
+        let some (a, b) := pairOf t | throwError "distinct_elim: unexpected conjunct {t}"
+        let some i := src.findIdx? (fun e => match pairOf e with
+            | some (c, d) => (c == a && d == b) || (c == b && d == a)
+            | none => false) | throwError "distinct_elim: no pair for {t}"
+        let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
+        let pr := mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
+        let some (c, _) := pairOf src[i]! | unreachable!
+        let pr' ← if c == a then pure pr else Meta.mkAppM ``Ne.symm #[pr]
+        proofs := proofs.push pr'
+      -- andN tgt as a right-nested conjunction
+      let mut acc := proofs.back!
+      for pr in proofs.pop.reverse do
+        acc ← Meta.mkAppM ``And.intro #[pr, acc]
+      return acc
+    let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs lps h)
+    let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls rps h)
+    addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
   | "aci_simp" =>
     addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "evaluate" =>

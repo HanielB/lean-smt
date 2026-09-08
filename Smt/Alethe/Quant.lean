@@ -130,13 +130,109 @@ def reconstructSko (s : Step) (exists_ : Bool) : ReconstructM Expr := do
   let h₂ := zetaAssigns a (← instantiateMVars last.proof)
   Meta.mkEqTrans h₁ h₂
 
-/-- `onepoint`: `(∀ x, φ) = ψ` where `φ` contains the guard `¬(x = t)` (or `x = t → …`), resp.
+/-! `onepoint`: `(∀ x, φ) = ψ` where `φ` contains the guard `¬(x = t)` (or `x = t → …`), resp.
     `(∃ x, φ) = ψ` where `φ` contains the conjunct `x = t`, with the subproof proving `φ[t] = ψ`
     under `x := t`. -/
+/-- Whether `e` is the guard equation `x = t` or `t = x`. -/
+def isGuardEq (x t e : Expr) : Bool :=
+  match e.eq? with
+  | some (_, l, r) => (l == x && r == t) || (l == t && r == x)
+  | none => false
+
+/-- A proof of the guard `x = t` from `h : e`, when `e` is the guard (either orientation) or a
+    conjunction containing it. -/
+partial def guardOf (x t : Expr) (h e : Expr) : MetaM (Option Expr) := do
+  if isGuardEq x t e then
+    let some (_, l, _) := e.eq? | return none
+    let hg ← if l == x then pure h else Meta.mkEqSymm h
+    return some hg
+  if let some (a, b) := e.and? then
+    if let some g ← guardOf x t (← Meta.mkAppM ``And.left #[h]) a then return some g
+    if let some g ← guardOf x t (← Meta.mkAppM ``And.right #[h]) b then return some g
+  return none
+
+/-- Prove `e` from `hnx : x ≠ t`, where `e` contains the guard `x = t` (in either orientation) as
+    a premise of an implication, negated, or inside `∨`/`∧`, possibly under other binders. -/
+partial def refuteGuard (x t hnx : Expr) (e : Expr) : MetaM Expr := do
+  let hasGuard (e : Expr) : Bool := (e.find? (isGuardEq x t)).isSome
+  match e with
+  | .forallE n d b bi =>
+    if isGuardEq x t d then
+      Meta.withLocalDecl n bi d fun hd => do
+        let some hg ← guardOf x t hd d | throwError "onepoint: malformed guard"
+        Meta.mkLambdaFVars #[hd] (← Meta.mkAbsurd (b.instantiate1 hd) hg hnx)
+    else
+      Meta.withLocalDecl n bi d fun v => do
+        -- a premise may also carry the guard inside a conjunction
+        if let some hg ← guardOf x t v d then
+          Meta.mkLambdaFVars #[v] (← Meta.mkAbsurd (b.instantiate1 v) hg hnx)
+        else
+          Meta.mkLambdaFVars #[v] (← refuteGuard x t hnx (b.instantiate1 v))
+  | _ =>
+    if let some p := e.not? then
+      -- ¬p: from h : p, derive the guard and contradict
+      return ← Meta.withLocalDeclD `hp p fun hp => do
+        let some hg ← guardOf x t hp p | throwError "onepoint: no guard under the negation {e}"
+        Meta.mkLambdaFVars #[hp] (mkApp hnx hg)
+    if let some (a, b) := e.app2? ``Or then
+      if hasGuard a then return ← Meta.mkAppM ``Or.inl #[← refuteGuard x t hnx a]
+      if hasGuard b then return ← Meta.mkAppM ``Or.inr #[← refuteGuard x t hnx b]
+      throwError "onepoint: no guard in {e}"
+    if let some (a, b) := e.and? then
+      return ← Meta.mkAppM ``And.intro #[← refuteGuard x t hnx a, ← refuteGuard x t hnx b]
+    throwError "onepoint: no guard in {e}"
+
+/-- `onepoint` on a universal quantifier: `(∀ ys, φ) = (∀ ys \ x, ψ)` where the anchor assigns
+    `x := t` (`t` may mention the binders before `x`), the subproof proves `φ[t/x] = ψ` under it,
+    and `φ` is trivially true when `x ≠ t` because it contains the guard `x = t`. -/
+def reconstructOnepointForall (s : Step) (a : AnchorCtx) (last : Premise) : ReconstructM Expr := do
+  let (xname, _, fv, _, te) := a.assigns[0]!
+  let quant := s.lits[0]![0]!
+  let n := quant[0]!.getNumChildren
+  let some k := (List.range n).find? (fun i => quant[0]![i]!.getSymbol! == xname)
+    | throwError "onepoint: the assigned variable {xname} is not bound by {quant}"
+  -- the other binders, as the anchor's variables (in order), and the subproof's `φ[t/x] = ψ`
+  let others := a.vars.map (·.2.2)
+  if others.size != n - 1 then
+    throwError "onepoint: the anchor declares {others.size} other variables, the quantifier has {n - 1}"
+  let heq := zetaAssigns a (← instantiateMVars last.proof)
+  let ty ← Meta.whnfR (zetaAssigns a last.concl)
+  let some (_, _, psi) := ty.eq? | throwError "onepoint: the subproof does not prove an equality"
+  let l ← reconstructTerm quant
+  let r ← reconstructTerm s.lits[0]![1]!
+  -- (→): instantiate the quantifier at the anchor's variables and `t`
+  let mp ← Meta.withLocalDeclD `h l fun h => do
+    let args := (List.range n).toArray.map fun i =>
+      if i < k then others[i]! else if i == k then te else others[i - 1]!
+    let body ← Meta.mkAppM ``Eq.mp #[heq, mkAppN h args]
+    Meta.mkLambdaFVars (#[h] ++ others) body
+  -- (←): for arbitrary binders, either `x = t` and the subproof applies, or the guard is refuted
+  let mpr ← Meta.withLocalDeclD `h r fun h => do
+    Meta.forallBoundedTelescope l n fun ys body => do
+      let x := ys[k]!
+      let os := ys.eraseIdx! k
+      let subst (e : Expr) := e.replaceFVars others os
+      let t' := subst te
+      let heq' := subst heq
+      let em ← Meta.mkAppM ``Classical.em #[← Meta.mkEq x t']
+      let onEq ← Meta.withLocalDeclD `hx (← Meta.mkEq x t') fun hx => do
+        -- body[x] from body[t'] = φ[t'] ← ψ
+        let lam ← Meta.mkLambdaFVars #[x] body
+        let hpsi := mkAppN h os
+        let hphi ← Meta.mkAppM ``Eq.mpr #[heq', hpsi]                 -- φ[t']
+        let hcongr ← Meta.mkAppM ``congrArg #[lam, hx]                -- lam x = lam t'
+        Meta.mkLambdaFVars #[hx] (← Meta.mkAppM ``Eq.mpr #[hcongr, hphi])
+      let onNe ← Meta.withLocalDeclD `hnx (← Meta.mkAppM ``Ne #[x, t']) fun hnx => do
+        Meta.mkLambdaFVars #[hnx] (← refuteGuard x t' hnx body)
+      Meta.mkLambdaFVars (#[h] ++ ys) (← Meta.mkAppM ``Or.elim #[em, onEq, onNe])
+  let _ := fv
+  Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]]
+
 def reconstructOnepoint (s : Step) : ReconstructM Expr := do
   let some a := s.anchor | throwError "onepoint: outside of an anchor"
   let some last := a.last | throwError "onepoint: empty subproof"
   if a.assigns.size != 1 then throwError "onepoint: {a.assigns.size} assignments (one variable is supported)"
+  if s.lits[0]![0]!.getKind! == .FORALL then return ← reconstructOnepointForall s a last
   let (_, _, fv, _, te) := a.assigns[0]!
   let quant := s.lits[0]![0]!
   let k := quant.getKind!
