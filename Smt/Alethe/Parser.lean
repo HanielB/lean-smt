@@ -27,8 +27,9 @@ only. Each context therefore carries two environments, the *substituted* one (`v
 `(:= x t)` renamings, cumulative and shadowing) and the *fixed* one (`fixed`, the enclosing
 environment plus the context's `(x S)` variables). A unit clause `(= l r)` parses `l` under the
 first and `r` under the second; they coincide wherever no substitution is in scope. A term named
-with `:named` is resolved anew under each environment it is used in, since the same shared term
-can mean different variables on the two sides.
+with `:named` is resolved anew under each environment it is used in (a context's side, a `let`
+or binder scope), since the same shared term can mean different variables in each: veriT names
+terms open in let-bound variables and reuses the names under other bindings of those variables.
 
 Since terms are arena nodes, substitution never copies a term. Numerals that are not SMT-LIB
 syntax (`-1`, `1/2`) are normalized to applications.
@@ -83,6 +84,15 @@ def mkList (cs : Array Nat) : M Nat :=
   modifyGet fun st =>
     let (a, i) := st.arena.mkList cs
     (i, { st with arena := a })
+
+/-- `|x|` denotes the same symbol as `x` when `x` is a simple symbol (cvc5 prints such symbols
+    unquoted, e.g. the `define-fun |def_ctx|` of a problem is `def_ctx` in the proof). -/
+def canonSymbol (s : String) : String :=
+  if s.length ≥ 2 && s.startsWith "|" && s.endsWith "|" then
+    let inner := ((s.drop 1).dropEnd 1).toString
+    let simpleChar (c : Char) := c.isAlphanum || "~!@$%^&*_-+=<>.?/".contains c
+    if !inner.isEmpty && !inner.front.isDigit && inner.all simpleChar then inner else s
+  else s
 
 def isDigits (s : String) : Bool :=
   !s.isEmpty && s.all Char.isDigit
@@ -148,6 +158,7 @@ def instantiate (params : Array String) (args : Array Nat) (body : Nat) : M Nat 
 /-- Turn a term into an arena node under the binding environment. -/
 partial def term (env : Env) : Sexp → M Nat
   | .atom s => do
+    let s := canonSymbol s
     match env.vars[s]? with
     | some (some n) => return n
     | some none => mkAtom s (bound := true)
@@ -180,7 +191,10 @@ partial def term (env : Env) : Sexp → M Nat
       match b with
       | .expr [.atom x, t] => env' := { env' with vars := env'.vars.insert x (some (← term env t)) }
       | _ => throw' s!"ill-formed let binding {b}"
-    term env' body
+    -- a `let` scope is its own environment for named terms: veriT names terms that mention the
+    -- let-bound variables and reuses the names under other bindings of the same variables, so a
+    -- name is resolved anew in every scope (a macro over the variables in scope)
+    term { env' with id := ← freshEnvId } body
   | .expr [.atom "choice", .expr [.expr [.atom x, sort]], body] => do
     -- `(choice ((x S)) φ)` becomes `(ε_S (lambda ((x S)) φ))` for a higher-order symbol `ε_S`
     -- whose meaning (`Classical.epsilon`) is attached at reconstruction; this works for open
@@ -205,10 +219,12 @@ partial def term (env : Env) : Sexp → M Nat
           env' := { env' with vars := env'.vars.insert x none }
           varNodes := varNodes.push (← mkList #[← mkAtom x (bound := true), ← term {} sort])
         | _ => throw' s!"ill-formed bound variable {v}"
-      mkList #[← mkAtom b, ← mkList varNodes, ← term env' body]
+      -- likewise a binder scope (its bound variables shadow let-bound and named terms)
+      mkList #[← mkAtom b, ← mkList varNodes, ← term { env' with id := ← freshEnvId } body]
     else
       mkList #[← mkAtom b, ← term env (.expr vars), ← term env body]
   | .expr (.atom f :: args) => do
+    let f := canonSymbol f
     if !env.vars.contains f then
       if let some (ps, body) := (← get).defs[f]? then
         if !ps.isEmpty then
@@ -314,7 +330,7 @@ def defineFun (f : String) (params : List Sexp) (body : Sexp) : M Unit := do
       env := { env with vars := env.vars.insert x none }
     | _ => throw' s!"ill-formed parameter {p} in the definition of {f}"
   let b ← term env body
-  modify fun st => { st with defs := st.defs.insert f (ps, b) }
+  modify fun st => { st with defs := st.defs.insert (canonSymbol f) (ps, b) }
 
 /-- Parse a sequence of commands until the list is exhausted or the step closing the current
     anchor (`close?`) is reached; that step is left in the returned remainder. -/

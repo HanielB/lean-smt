@@ -95,6 +95,28 @@ def orient (pr : Premise) (a b : cvc5.Term) : ReconstructM Expr := do
 /-- A proof of `a = a`. -/
 def mkRefl (a : cvc5.Term) : ReconstructM Expr := mkEqRefl a
 
+/-- `rare_rewrite` with `distinct-false`: `(= (distinct … t … t …) false)`. The reconstruction of
+    `distinct` is a conjunction of pairwise disequalities, one of which is `t ≠ t`. -/
+def reconstructDistinctFalse (s : Step) : ReconstructM Expr := do
+  let (l, _) ← eqSides s.lits[0]!
+  let le ← reconstructTerm l
+  let ps ← collectPropsInAndChain le
+  let sidesOf (p : Expr) : Option (Expr × Expr) :=
+    match p.ne? with
+    | some (_, a, b) => some (a, b)
+    | none => match p.not? >>= Expr.eq? with
+      | some (_, a, b) => some (a, b)
+      | none => none
+  let some i := ps.findIdx? (fun p => match sidesOf p with | some (a, b) => a == b | none => false)
+    | throwError "distinct-false: no reflexive disequality in {le}"
+  let some (a, _) := sidesOf ps[i]! | unreachable!
+  let sps := listExpr ps (mkSort .zero)
+  let h ← Meta.withLocalDeclD `h le fun h => do
+    let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
+    let pr := mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
+    Meta.mkLambdaFVars #[h] (mkApp pr (← Meta.mkEqRefl a))
+  addThm s.concl (← Meta.mkAppM ``eq_false #[h])
+
 /-- A proof of `a = c` from `hab : a = b` and `hbc : b = c`. -/
 def mkTrans (a b c : cvc5.Term) (hab hbc : Expr) : ReconstructM Expr := do
   let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
@@ -104,6 +126,30 @@ def mkTrans (a b c : cvc5.Term) (hab hbc : Expr) : ReconstructM Expr := do
   let hab : Q($x = $y) := hab
   let hbc : Q($y = $z) := hbc
   return q(Eq.trans $hab $hbc)
+
+/-- `f(l₁ … lₙ) = f(r₁ … rₙ)` from `hs : lᵢ = rᵢ` by rewriting the occurrences of each `lᵢ` in
+    the reconstruction of the left-hand side, for reconstructions that are not applications of a
+    function to the arguments (n-ary `distinct`). -/
+def congByRewriting (s : Step) (l r : cvc5.Term) (start : Nat) (hs : Array Expr) : ReconstructM Expr := do
+  let le ← reconstructTerm l
+  let re ← reconstructTerm r
+  let mut cur := le
+  let mut proof : Option Expr := none
+  for i in [start:l.getNumChildren] do
+    if l[i]! == r[i]! then continue
+    let a ← reconstructTerm l[i]!
+    let b ← reconstructTerm r[i]!
+    let motive := Expr.lam `x (← Meta.inferType a) (cur.abstract #[a]) .default
+    let step ← Meta.mkCongrArg motive hs[i - start]!
+    let next := (cur.abstract #[a]).instantiate1 b
+    proof := some (← match proof with
+      | none => pure step
+      | some h => Meta.mkEqTrans h step)
+    cur := next
+  let h ← match proof with
+    | some h => pure h
+    | none => Meta.mkEqRefl le
+  addThm s.concl (← Meta.mkExpectedTypeHint h (← Meta.mkEq le re))
 
 /-- `cong`: align the premises with the argument positions of the two applications (equal
     arguments get `Eq.refl`, flipped premises `Eq.symm`), then use `smtCongr`. -/
@@ -142,6 +188,10 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
             break
       let some pr := found | throwError "cong: no premise for {l[i]!} = {r[i]!}"
       hs := hs.push (← orient pr l[i]! r[i]!)
+  if k == .DISTINCT then
+    -- `distinct` reconstructs to a conjunction of disequalities, not an application: rewrite the
+    -- arguments one at a time
+    return ← congByRewriting s l r start hs
   addTac s.concl (UF.smtCongr · hs)
 
 /-- Prove a clause `(cl l₁ … lₙ)` by refuting the negations of its literals: `k` receives the
@@ -352,7 +402,18 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       addThm q($t = $t') (← nativeDecideProof q($t = $t') hp)
     else
       addThm q($t = $t') (← decideProof q($t = $t') hp)
-  | "rare_rewrite" => reconstructRareRule s
+  | "rare_rewrite" =>
+    match s.args[0]? with
+    | some (.str "distinct-false") => reconstructDistinctFalse s
+    | _ => reconstructRareRule s
+  | "absorb" =>
+    -- (= (op … z …) z) for the absorbing element z of op (`and`/`false`, `or`/`true`, `*`/`0`)
+    let (l, r) ← eqSides s.lits[0]!
+    let e ← reconstructTerm l
+    let z ← reconstructTerm r
+    let op := e.appFn!.appFn!
+    let tac := if ← useNative then Builtin.nativeAbsorb else Builtin.absorb
+    addTac s.concl (tac · z op)
   | _ => return none
 where
   unNotTerm (t : cvc5.Term) : ReconstructM cvc5.Term := do
