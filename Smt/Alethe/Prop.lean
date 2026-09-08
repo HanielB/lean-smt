@@ -85,8 +85,63 @@ def reconstructConnectiveDef (s : Step) : ReconstructM Expr := do
   | .FORALL | .EXISTS => addTac s.concl closeQuantDuality
   | _ => throwError "{s.rule}: unsupported shape {t}"
 
+/-- The Boolean arguments of uninterpreted applications in `e` (other than `true`/`false`, and
+    not under binders): the atoms the application form of `bfun_elim` case-splits on. -/
+partial def bfunAtoms (e : Expr) (acc : Array Expr) : MetaM (Array Expr) := do
+  match e with
+  | .app .. =>
+    let f := e.getAppFn
+    let args := e.getAppArgs
+    let mut acc := acc
+    for a in args do
+      acc ← bfunAtoms a acc
+    if f.isFVar then
+      for a in args do
+        if !(a.isConstOf ``True || a.isConstOf ``False) && !a.hasLooseBVars && (← Meta.isProp a) then
+          if !acc.contains a then acc := acc.push a
+    return acc
+  | .mdata _ b => bfunAtoms b acc
+  | .proj _ _ b => bfunAtoms b acc
+  | _ => return acc
+
+/-- Close `φ = ψ`, where `ψ` is `φ` with Boolean arguments `b` of applications turned into
+    `ite b (… true …) (… false …)`, by case-splitting on the atoms and simplifying. -/
+partial def bfunElimProve (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) : MetaM Unit := do
+  match atoms with
+  | [] =>
+    let mut thms ← Meta.getSimpTheorems
+    for h in hyps do
+      thms ← thms.add (.fvar h.fvarId!) #[] h
+    let ctx ← Meta.Simp.mkContext {} #[thms] (← Meta.getSimpCongrTheorems)
+    let (r, _) ← Meta.simpGoal mv ctx #[← Meta.Simp.getSimprocs]
+    if let some (_, mv') := r then
+      throwError "bfun_elim: the two sides differ in a case:{indentExpr (← mv'.getType)}"
+  | b :: rest =>
+    let ty ← mv.getType
+    let em ← Meta.mkAppM ``Classical.em #[b]
+    let pos ← Meta.withLocalDeclD `hb b fun hb => do
+      let m ← Meta.mkFreshExprMVar ty
+      bfunElimProve m.mvarId! rest (hyps.push hb)
+      Meta.mkLambdaFVars #[hb] (← instantiateMVars m)
+    let neg ← Meta.withLocalDeclD `hnb (mkNot b) fun hnb => do
+      let m ← Meta.mkFreshExprMVar ty
+      bfunElimProve m.mvarId! rest (hyps.push hnb)
+      Meta.mkLambdaFVars #[hnb] (← instantiateMVars m)
+    mv.assign (← Meta.mkAppM ``Or.elim #[em, pos, neg])
+
 @[alethe_rule_reconstruct] def reconstructProp : RuleReconstructor := fun s => do
   match s.rule with
+  | "bfun_elim" =>
+    -- the application form (Carcara's core pass reduces the quantifier form): `f … b …` becomes
+    -- `ite b (f … true …) (f … false …)` throughout the premise
+    let pr := s.premise! 0
+    if pr.lits.size != 1 || s.lits.size != 1 then throwError "bfun_elim: expected unit clauses"
+    let phi ← reconstructTerm pr.lits[0]!
+    let psi ← reconstructTerm s.lits[0]!
+    let atoms ← bfunAtoms phi #[]
+    if atoms.size > 8 then throwError "bfun_elim: {atoms.size} Boolean arguments to split on"
+    let heq ← addTac (← Meta.mkEq phi psi) fun mv => bfunElimProve mv atoms.toList #[]
+    addThm s.concl (← Meta.mkAppM ``Eq.mp #[heq, pr.proof])
   | "connective_def" | "qnt_duality" => reconstructConnectiveDef s
   | "true" => addThm s.concl q(trivial)
   | "false" => addThm s.concl q(not_false_cl)
