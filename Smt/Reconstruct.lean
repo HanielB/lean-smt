@@ -18,10 +18,30 @@ public meta import Smt.Attribute
 public meta section
 
 open Qq in
-def Lean.Meta.synthDecidableInstance (e : Q(Prop)) : MetaM Expr := do
+/-- A `Decidable` instance for `e`: the synthesized one if there is one, otherwise a classical one
+    built compositionally through `¬`, `∧`, `∨` and `↔`, so that the instance of a compound
+    condition is the one a theorem statement over `[Decidable c]` elaborates to (`instDecidableNot`
+    over the instance of `c`, etc.) rather than an opaque `Classical.propDecidable` of the whole. -/
+partial def Lean.Meta.synthDecidableInstance (e : Q(Prop)) : MetaM Expr := do
   let oh : Option Q(Decidable $e) ← Meta.synthInstance? q(Decidable $e)
-  let h : Q(Decidable $e) := oh.getD q(Classical.propDecidable $e)
-  return h
+  if let some h := oh then return h
+  match e with
+  | ~q(¬$p) =>
+    let hp : Q(Decidable $p) ← synthDecidableInstance p
+    return q(@instDecidableNot $p $hp)
+  | ~q($p ∧ $r) =>
+    let hp : Q(Decidable $p) ← synthDecidableInstance p
+    let hr : Q(Decidable $r) ← synthDecidableInstance r
+    return q(@instDecidableAnd $p $r $hp $hr)
+  | ~q($p ∨ $r) =>
+    let hp : Q(Decidable $p) ← synthDecidableInstance p
+    let hr : Q(Decidable $r) ← synthDecidableInstance r
+    return q(@instDecidableOr $p $r $hp $hr)
+  | ~q($p ↔ $r) =>
+    let hp : Q(Decidable $p) ← synthDecidableInstance p
+    let hr : Q(Decidable $r) ← synthDecidableInstance r
+    return q(@instDecidableIff $p $r $hp $hr)
+  | _ => return q(Classical.propDecidable $e)
 
 namespace Smt
 
