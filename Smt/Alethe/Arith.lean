@@ -116,16 +116,29 @@ partial def linComb (t : cvc5.Term) : LinComb :=
     | _ => { coeffs := (∅ : Std.HashMap cvc5.Term Rat).insert t 1 }
   | _ => { coeffs := (∅ : Std.HashMap cvc5.Term Rat).insert t 1 }
 
-/-- The gcd of the variable coefficients and the constant of a combination, `1` unless they are
-    all integers (Carcara's `coefficients_gcd`). -/
-def gcdWithConst (p : LinComb) : Int := Id.run do
-  if p.const.den != 1 then return 1
-  let mut g : Nat := p.const.num.natAbs
+/-- How much an integer bound `p ⋈ 0` can be tightened: with `p = Σ pᵢ xᵢ + k` over integers, the
+    variable part is a multiple of `g = gcd pᵢ`, so `Σ pᵢ xᵢ ≤ u` gives `Σ pᵢ xᵢ ≤ g⌊u/g⌋` for
+    `u = -k` (non-strict) or `u = -k - 1` (strict). The result is the `δ ≥ 0` with `p + δ ≤ 0`;
+    it is at least 1 for a strict bound, and 0 when nothing is gained. -/
+def strengthenGain (p : LinComb) (strict : Bool) : Int := Id.run do
+  let mut g : Nat := 0
   for (_, c) in p.coeffs.toList do
     if c == 0 then continue
-    if c.den != 1 then return 1
+    if c.den != 1 then return 0
     g := Nat.gcd g c.num.natAbs
-  return if g == 0 then 1 else g
+  if g == 0 then return 0
+  let gq : Rat := (g : Int)
+  let u : Rat := if strict then -p.const - 1 else -p.const
+  let tightened : Rat := gq * ((u / gq).floor : Int) + p.const
+  let d := -tightened
+  return if d.den == 1 && d.num > 0 then d.num else 0
+
+/-- The tightening actually applied to an integer bound `p ⋈ 0`: the gcd rounding when it gains
+    something, and otherwise `a < b ⟹ a + 1 ≤ b` for a strict bound. Both the arithmetic check
+    and the proof go through this, so that they agree on the combination. -/
+def tightening (p : LinComb) (strict : Bool) : Int :=
+  let g := strengthenGain p strict
+  if g > 0 then g else if strict then 1 else 0
 
 /-- The linear combination `lhs - rhs` and relation of a (possibly negated) literal, as the bound
     obtained by *negating* the literal: `¬(a < b)` gives `b ≤ a`, etc. -/
@@ -239,12 +252,13 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
       if c == 0 then used := used.push false; continue
       let mut p := (linComb a).add (linComb b).neg  -- a - b ⋈ 0
       let mut r := r
-      if int && r == .lt then
-        -- a < b  ⟹  a + g ≤ b, g the gcd of the coefficients and the (floored) constant, as
-        -- Carcara strengthens (`+1` when the constant is not an integer)
-        let g := gcdWithConst p
-        p := { p with const := (Rat.floor p.const : Int) + g }
-        r := .le
+      if int && r != .eq then
+        -- an integer bound tightens to `a + δ ≤ b`: the variable part of `b - a` is a multiple of
+        -- the gcd of its coefficients, so a bound on it rounds to that multiple
+        let d := tightening p (r == .lt)
+        if d > 0 then
+          p := { p with const := p.const + d }
+        if r == .lt then r := .le
       comb := comb.add (p.scale c)
       rel := relJoin rel r
       used := used.push true
@@ -294,21 +308,22 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
             let (x, y) := (ty.appFn!.appArg!, ty.appArg!)
             h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM n #[x, y], h]
       let mut bd ← boundOf h
-      -- strengthen strict integer bounds: a < b ⟹ a + g ≤ b, with g the gcd of the coefficients
-      -- and constant of b - a (`1` otherwise), justified by b - a = g · L for an integer L
-      if int && r == .lt then
+      -- tighten integer bounds: `a ⋈ b` gives `a + δ ≤ b`, since the variable part of `b - a` is
+      -- a multiple of the gcd `g` of its coefficients; `omega` closes it from the bound and the
+      -- shape `b - a = g · L + k` that `poly_norm` establishes
+      if int && r != .eq then
         let some (_, a, b) := negatedLiteral l | unreachable!
-        let p := (linComb a).add (linComb b).neg  -- a - b (< 0)
-        let g := gcdWithConst p
-        if g > 1 then
-          -- L := Σ (-cᵢ/g)·xᵢ + (-k/g), so that b - a = g * L
-          let mut lterm : Expr := numeral names (-p.const / g)
+        let p := (linComb a).add (linComb b).neg  -- a - b (⋈ 0)
+        let g := strengthenGain p (r == .lt)
+        if g > 0 then
+          -- b - a = Σ (-cᵢ)·xᵢ + (-k): the shape omega needs to round the bound
+          let mut lterm : Expr := numeral names (-p.const)
           for (t, c) in p.coeffs.toList do
             if c == 0 then continue
             let x ← reconstructTerm t
-            lterm ← Meta.mkAppM ``HAdd.hAdd #[lterm, ← Meta.mkAppM ``HMul.hMul #[numeral names (-c / g), x]]
+            lterm ← Meta.mkAppM ``HAdd.hAdd #[lterm, ← Meta.mkAppM ``HMul.hMul #[numeral names (-c), x]]
           let ge := numeral names g
-          let eqGoal ← Meta.mkAppM ``Eq #[← Meta.mkAppM ``HSub.hSub #[bd.b, bd.a], ← Meta.mkAppM ``HMul.hMul #[ge, lterm]]
+          let eqGoal ← Meta.mkAppM ``Eq #[← Meta.mkAppM ``HSub.hSub #[bd.b, bd.a], lterm]
           let heq ← Meta.mkFreshExprMVar eqGoal
           names.polyNorm heq.mvarId!
           let goal ← Meta.mkAppM ``LE.le #[← Meta.mkAppM ``HAdd.hAdd #[bd.a, ge], bd.b]
@@ -316,11 +331,13 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
           try
             let some g₀ ← hg.mvarId!.falseOrByContra | pure ()
             g₀.withContext do Lean.Elab.Tactic.Omega.omega ([h, heq] ++ (← Lean.getLocalHyps).toList) g₀ {}
-          catch ex => throwError "la_generic: strengthening by {g} failed: {ex.toMessageData}"
+          catch ex => throwError "la_generic: tightening by {g} failed: {ex.toMessageData}"
           h ← instantiateMVars hg
-        else
+          bd ← boundOf h
+        else if r == .lt then
+          -- a strict bound with no gain (a non-integer coefficient): `a < b` is `a + 1 ≤ b`
           h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM ``Int.add_one_le_iff #[bd.a, bd.b], h]
-        bd ← boundOf h
+          bd ← boundOf h
       -- scale
       if c != 1 then
         let ce := numeral names c
