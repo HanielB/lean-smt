@@ -328,10 +328,18 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
           names.polyNorm heq.mvarId!
           let goal ← Meta.mkAppM ``LE.le #[← Meta.mkAppM ``HAdd.hAdd #[bd.a, ge], bd.b]
           let hg ← Meta.mkFreshExprMVar goal
+          let before ← getLCtx
           try
             let some g₀ ← hg.mvarId!.falseOrByContra | pure ()
-            g₀.withContext do Lean.Elab.Tactic.Omega.omega ([h, heq] ++ (← Lean.getLocalHyps).toList) g₀ {}
-          catch ex => throwError "la_generic: tightening by {g} failed: {ex.toMessageData}"
+            -- the bound, the normalized shape and the negated goal are all omega needs; handing
+            -- it the whole local context makes a step with hundreds of literals quadratic in the
+            -- size of the problem
+            g₀.withContext do
+              let extra := (← getLCtx).foldl (init := #[]) fun acc d =>
+                if d.isImplementationDetail || before.contains d.fvarId then acc else acc.push d.toExpr
+              Lean.Elab.Tactic.Omega.omega ([h, heq] ++ extra.toList) g₀ {}
+          catch ex =>
+            throwError "la_generic: tightening a {repr r} bound with constant {p.const} by {g} failed: {ex.toMessageData}"
           h ← instantiateMVars hg
           bd ← boundOf h
         else if r == .lt then
@@ -418,8 +426,14 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
       else
         -- division by a constant: (and (<= (* b (div a b)) a) (< a (* b (+ (div a b) ±1))))
         addTac s.concl fun mv => do
+          let before := (← mv.getDecl).lctx
           let some g ← mv.falseOrByContra | return
-          g.withContext do Lean.Elab.Tactic.Omega.omega (← Lean.getLocalHyps).toList g {}
+          -- only what `falseOrByContra` introduced: the problem's own assumptions are irrelevant
+          -- here, and passing them makes omega's cost grow with the problem
+          g.withContext do
+            let facts := (← getLCtx).foldl (init := #[]) fun acc d =>
+              if d.isImplementationDetail || before.contains d.fvarId then acc else acc.push d.toExpr
+            Lean.Elab.Tactic.Omega.omega facts.toList g {}
     | .IMPLIES =>
       -- (=> (not (= b 0)) (= (* b (/ a b)) a)), real division
       let div := t[1]![0]![1]!
