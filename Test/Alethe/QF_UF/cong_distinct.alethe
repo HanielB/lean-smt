@@ -1,0 +1,7 @@
+(assume h1 (= a b))
+(assume h2 (distinct (f a) c))
+(assume h3 (not (distinct (f b) c)))
+(step t1 (cl (= (f a) (f b))) :rule cong :premises (h1))
+(step t2 (cl (= (distinct (f a) c) (distinct (f b) c))) :rule cong :premises (t1))
+(step t3 (cl (not (= (distinct (f a) c) (distinct (f b) c))) (not (distinct (f a) c)) (distinct (f b) c)) :rule equiv_pos2)
+(step t4 (cl) :rule resolution :premises (t2 t3 h2 h3) :args ((= (distinct (f a) c) (distinct (f b) c)) true (distinct (f a) c) false (distinct (f b) c) true))

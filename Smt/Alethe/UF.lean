@@ -139,13 +139,16 @@ def congByRewriting (s : Step) (l r : cvc5.Term) (start : Nat) (hs : Array Expr)
     if l[i]! == r[i]! then continue
     let a ← reconstructTerm l[i]!
     let b ← reconstructTerm r[i]!
-    let motive := Expr.lam `x (← Meta.inferType a) (cur.abstract #[a]) .default
+    -- `kabstract`, not `Expr.abstract`: an argument is any term, not only a free variable
+    let body ← Meta.kabstract cur a
+    unless body.hasLooseBVars do
+      throwError "cong: {l[i]!} does not occur in {cur}"
+    let motive := Expr.lam `x (← Meta.inferType a) body .default
     let step ← Meta.mkCongrArg motive hs[i - start]!
-    let next := (cur.abstract #[a]).instantiate1 b
     proof := some (← match proof with
       | none => pure step
       | some h => Meta.mkEqTrans h step)
-    cur := next
+    cur := body.instantiate1 b
   let h ← match proof with
     | some h => pure h
     | none => Meta.mkEqRefl le
