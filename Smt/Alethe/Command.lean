@@ -22,17 +22,18 @@ open Lean Elab Command
     relative to the working directory. Options: `native` allows native evaluation, `lax` accepts
     assumptions that are not assertions of the problem, `timings` reports the time spent in each
     phase. -/
-syntax (name := checkAletheCmd) "#check_alethe " str str (&"native")? (&"lax")? (&"timings")? : command
+syntax (name := checkAletheCmd) "#check_alethe " str str (&"native")? (&"lax")? (&"term")? (&"timings")? : command
 
 @[command_elab checkAletheCmd] def elabCheckAlethe : CommandElab := fun stx => do
   let some problem := stx[1].isStrLit? | throwError "expected a string"
   let some proof := stx[2].isStrLit? | throwError "expected a string"
   let native := !stx[3].isNone
   let lax := !stx[4].isNone
-  let timings := !stx[5].isNone
+  let term := !stx[5].isNone
+  let timings := !stx[6].isNone
   liftTermElabM do
     let t₀ ← IO.monoMsNow
-    let r ← checkAlethe problem proof native lax
+    let r ← checkAlethe problem proof native lax term
     let t₁ ← IO.monoMsNow
     let mut msg := m!"{r.verdict}: {r.stats.summary}"
     for (id, rule, m) in r.stats.failures do

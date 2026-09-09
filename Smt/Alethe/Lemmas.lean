@@ -272,6 +272,14 @@ theorem div_by_zero_intro {α : Sort u} {β : Sort v} (inst : Nonempty α) (f : 
 
 /-! The `connective_def` rule. -/
 
+theorem ite_then_intro {α : Sort u} (c : Prop) [h : Decidable c] (t e : α) :
+    ¬c ∨ ite c t e = t :=
+  if hc : c then Or.inr (if_pos hc) else Or.inl hc
+
+theorem ite_else_intro {α : Sort u} (c : Prop) [h : Decidable c] (t e : α) :
+    c ∨ ite c t e = e :=
+  if hc : c then Or.inl hc else Or.inr (if_neg hc)
+
 theorem connective_def_xor (a b : Prop) : XOr a b = ((¬a ∧ b) ∨ (a ∧ ¬b)) :=
   propext ⟨fun h => h.elim (fun ha hb => .inr ⟨ha, hb⟩) (fun ha hb => .inl ⟨ha, hb⟩),
            fun h => h.elim (fun ⟨ha, hb⟩ => .inr ha hb) (fun ⟨ha, hb⟩ => .inl ha hb)⟩

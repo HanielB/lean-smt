@@ -49,6 +49,24 @@ register_option smt.alethe.checkInner : Bool := {
   descr := "also type-check (with the elaborator) the steps inside subproofs, to attribute failures"
 }
 
+register_option smt.alethe.batch : Nat := {
+  defValue := 1
+  descr := "top-level steps per kernel call (1: one call per step; 0: no bound on the number of \
+steps, so the whole proof unless a size budget applies)"
+}
+
+register_option smt.alethe.batchSize : Nat := {
+  defValue := 0
+  descr := "send a batch to the kernel once the proofs it holds reach this many term nodes \
+(0: no size budget)"
+}
+
+register_option smt.alethe.jobs : Nat := {
+  defValue := 1
+  descr := "kernel calls to run concurrently (1: sequential); each call in flight holds its \
+proofs in memory"
+}
+
 structure Stats where
   /-- Steps proved by a reconstructor and accepted by the kernel. -/
   checked : Nat := 0
@@ -80,6 +98,23 @@ def Stats.summary (st : Stats) : String := Id.run do
     s := s ++ ", empty clause not derived"
   return s
 
+/-- A checked-by-the-kernel-later step: the hypothesis later steps use for it, its conclusion and
+    proof, and its id and rule for reporting. -/
+structure PendingStep where
+  fvar : FVarId
+  concl : Expr
+  proof : Expr
+  id : String
+  rule : String
+deriving Inhabited
+
+/-- A kernel call in flight: the steps it covers, the context it runs in, and its task (the
+    inferred type or the kernel's exception, and the milliseconds it took). -/
+structure KernelJob where
+  steps : Array PendingStep
+  lctx : LocalContext
+  task : Task (Except Kernel.Exception Expr × Nat)
+
 structure DState where
   steps : Std.HashMap String Premise := {}
   stats : Stats := {}
@@ -100,6 +135,12 @@ structure DState where
   term : Bool := false
   /-- In term mode, the proof of the top-level empty clause. -/
   refutation : Option Expr := none
+  /-- Top-level steps whose proofs have not been sent to the kernel yet (see `flushBatch`). -/
+  pending : Array PendingStep := #[]
+  /-- Term nodes held by `pending`, when a size budget is set. -/
+  pendingSize : Nat := 0
+  /-- Kernel calls running concurrently, oldest first. -/
+  inflight : Array KernelJob := #[]
 
 abbrev AletheM := ReaderT (IO.Ref DState) ReconstructM
 
@@ -119,15 +160,20 @@ def registerPremise (p : Premise) : AletheM Unit := do
   if (← getD).steps.contains p.id then throwError "duplicate step id '{p.id}'"
   modifyD fun st => { st with steps := st.steps.insert p.id p }
 
-def recordTrust (s : Step) (msg : String) : AletheM Unit := do
-  trace[smt.alethe.step] "trusting {s.id} ({s.rule}): {msg}"
-  -- `rare_rewrite` steps are counted per RARE rule
-  let rule := match s.rule, s.args[0]? with
-    | "rare_rewrite", some (Arg.str name) => s!"rare_rewrite:{name}"
-    | rule, _ => rule
+def recordTrustRule (id rule : String) (msg : String) : AletheM Unit := do
+  trace[smt.alethe.step] "trusting {id} ({rule}): {msg}"
   modifyD fun st => { st with stats := { st.stats with
     trusted := st.stats.trusted.insert rule (st.stats.trusted.getD rule 0 + 1),
-    failures := st.stats.failures.push (s.id, rule, msg) } }
+    failures := st.stats.failures.push (id, rule, msg) } }
+
+/-- The rule a step is counted under: `rare_rewrite` steps are counted per RARE rule. -/
+def Step.countedRule (s : Step) : String :=
+  match s.rule, s.args[0]? with
+  | "rare_rewrite", some (Arg.str name) => s!"rare_rewrite:{name}"
+  | rule, _ => rule
+
+def recordTrust (s : Step) (msg : String) : AletheM Unit :=
+  recordTrustRule s.id s.countedRule msg
 
 def countChecked : AletheM Unit :=
   modifyD fun st => { st with stats := { st.stats with checked := st.stats.checked + 1 } }
@@ -158,32 +204,125 @@ def reconstructStep (s : Step) : AletheM (Option Expr) := withTraceNode `smt.ale
   | .ok none => recordTrust s "no reconstructor"; return none
   | .error msg => recordTrust s msg; return none
 
-/-- Check `v : s.concl` in the kernel. The local context handed to the kernel holds the problem's
-    symbols and assertions plus only the step hypotheses `v` mentions: the kernel's cost per call
-    must not grow with the number of steps checked so far. -/
-def kernelCheck (s : Step) (v : Expr) : AletheM Bool := do
-  if !smt.alethe.kernel.get (← getOptions) then return true
+/-- The number of distinct nodes of `e`: what a pending proof costs in memory, up to sharing. -/
+private partial def sharedSizeAux (e : Expr) : StateM ExprSet Nat := do
+  if (← get).contains e then return 0
+  modify (·.insert e)
+  match e with
+  | .app f a => return 1 + (← sharedSizeAux f) + (← sharedSizeAux a)
+  | .lam _ d b _ | .forallE _ d b _ => return 1 + (← sharedSizeAux d) + (← sharedSizeAux b)
+  | .letE _ t v b _ => return 1 + (← sharedSizeAux t) + (← sharedSizeAux v) + (← sharedSizeAux b)
+  | .mdata _ b => return 1 + (← sharedSizeAux b)
+  | .proj _ _ b => return 1 + (← sharedSizeAux b)
+  | _ => return 1
+
+def sharedSize (e : Expr) : Nat := (sharedSizeAux e).run' {}
+
+/-- The local context for a kernel call: the problem's symbols and assertions plus only the step
+    hypotheses `e` mentions, so that the cost of a call does not grow with the number of steps
+    checked so far. -/
+def kernelLCtx (e : Expr) : AletheM LocalContext := do
   let st ← getD
-  let t₀ ← IO.monoMsNow
-  let v ← instantiateMVars v
-  let e := mkApp2 (mkConst ``id [.zero]) s.concl v
   let mut lctx := st.baseLctx
-  let mut n : Nat := 0
   for fvarId in (collectFVars {} e).fvarSet.toList do
     if !lctx.contains fvarId then
       if let some d := st.lctx.find? fvarId then
         lctx := lctx.addDecl d
-        n := n + 1
-  let env ← getEnv
-  let r ← IO.lazyPure fun _ => Kernel.check env lctx e
-  let t₁ ← IO.monoMsNow
-  trace[smt.alethe.step] "kernel {s.id}: size {e.sizeWithoutSharing} depth {e.approxDepth} hyps {n} ms {t₁ - t₀}"
-  modifyD fun st => { st with stats := { st.stats with kernelMs := st.stats.kernelMs + (t₁ - t₀) } }
+  return lctx
+
+/-- The term of a batch of steps: `(fun h₁ : c₁ => … (fun hₙ : cₙ => trivial) eₙ …) e₁`. The
+    kernel accepts it exactly when every `eᵢ` proves `cᵢ` under the hypotheses of the steps before
+    it, which is what checking the steps one by one asks; the binders keep those hypotheses opaque,
+    and one call shares its inference cache over the whole batch. -/
+def batchTerm (ps : Array PendingStep) : Expr := Id.run do
+  -- each proof is abstracted once, over the hypotheses of the steps before it in the batch;
+  -- abstracting the partial term instead would rebuild it at every step
+  let mut abstracted : Array Expr := #[]
+  let mut earlier : Array Expr := #[]
+  for p in ps do
+    abstracted := abstracted.push (p.proof.abstract earlier)
+    earlier := earlier.push (.fvar p.fvar)
+  -- the loose bound variables of an abstracted proof are exactly the binders it sits under
+  let mut body := mkConst ``True.intro
+  for i in [0:ps.size] do
+    let j := ps.size - 1 - i
+    body := mkApp (Expr.lam (Name.mkSimple ps[j]!.id) ps[j]!.concl body .default) abstracted[j]!
+  return body
+
+/-- Record the outcome of one kernel call. A rejected batch of more than one step is re-checked
+    step by step, so that what is trusted is what the kernel actually rejected. -/
+def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (ms : Nat) :
+    AletheM Unit := do
+  modifyD fun st => { st with stats := { st.stats with kernelMs := st.stats.kernelMs + ms } }
   match r with
-  | .ok _ => return true
+  | .ok _ =>
+    modifyD fun st => { st with stats := { st.stats with checked := st.stats.checked + steps.size } }
   | .error ex =>
-    recordTrust s s!"kernel: {← (ex.toMessageData (← getOptions)).toString}"
-    return false
+    if h : steps.size == 1 then
+      let p := steps[0]'(by simp at h; omega)
+      recordTrustRule p.id p.rule s!"kernel: {← (ex.toMessageData (← getOptions)).toString}"
+    else
+      let env ← getEnv
+      for p in steps do
+        let e := batchTerm #[p]
+        let lctx ← kernelLCtx e
+        match ← IO.lazyPure fun _ => Kernel.check env lctx e with
+        | .ok _ => countChecked
+        | .error ex =>
+          recordTrustRule p.id p.rule s!"kernel: {← (ex.toMessageData (← getOptions)).toString}"
+
+/-- Wait for the oldest kernel call in flight and record its outcome. -/
+def joinOne : AletheM Unit := do
+  let st ← getD
+  if h : 0 < st.inflight.size then
+    let job := st.inflight[0]
+    modifyD fun st => { st with inflight := st.inflight.extract 1 st.inflight.size }
+    let (r, ms) ← IO.wait job.task
+    recordBatch job.steps r ms
+
+/-- Wait until at most `n` kernel calls are in flight. -/
+partial def drainTo (n : Nat) : AletheM Unit := do
+  if (← getD).inflight.size ≤ n then return
+  joinOne
+  drainTo n
+
+/-- Send the pending steps to the kernel as a single call (synchronously, or as a task when
+    `smt.alethe.jobs` allows more than one call in flight). -/
+def flushBatch : AletheM Unit := do
+  let st ← getD
+  if st.pending.isEmpty then return
+  modifyD fun st => { st with pending := #[], pendingSize := 0 }
+  let steps := st.pending
+  let e := batchTerm steps
+  let lctx ← kernelLCtx e
+  let env ← getEnv
+  let jobs := smt.alethe.jobs.get (← getOptions)
+  if jobs ≤ 1 then
+    let t₀ ← IO.monoMsNow
+    let r ← IO.lazyPure fun _ => Kernel.check env lctx e
+    let t₁ ← IO.monoMsNow
+    trace[smt.alethe.step] "kernel batch of {steps.size} ending at {steps.back!.id}: {t₁ - t₀} ms"
+    recordBatch steps r (t₁ - t₀)
+  else
+    drainTo (jobs - 1)
+    let task ← (BaseIO.asTask do
+      let t₀ ← IO.monoMsNow
+      let r := Kernel.check env lctx e
+      let t₁ ← IO.monoMsNow
+      return (r, t₁ - t₀)).toIO
+    modifyD fun st => { st with inflight := st.inflight.push { steps, lctx, task } }
+
+/-- Wait for every kernel call in flight. -/
+def joinAll : AletheM Unit := drainTo 0
+
+/-- Whether the pending batch has reached the step count or size budget. -/
+def batchFull : AletheM Bool := do
+  let st ← getD
+  let opts ← getOptions
+  let maxSteps := smt.alethe.batch.get opts
+  let maxSize := smt.alethe.batchSize.get opts
+  return (maxSteps != 0 && st.pending.size ≥ maxSteps)
+      || (maxSize != 0 && st.pendingSize ≥ maxSize)
 
 /-- Add a top-level step as a hypothesis of the local context. -/
 def addHypothesis (s : Step) : AletheM Expr := do
@@ -224,12 +363,23 @@ def concludeStep (s : Step) (e? : Option Expr) : AletheM Expr := do
       if s.lits.isEmpty then modifyD fun st => { st with refutation := some e }
       return e
   else if st.depth == 0 then
+    -- the hypothesis is introduced first: later steps refer to it, and the kernel sees the step's
+    -- proof only when its batch is flushed
+    let h ← addHypothesis s
     if let some e := e? then
-      if ← kernelCheck s e then
+      if !smt.alethe.kernel.get (← getOptions) then
         countChecked
+      else
+        let e ← instantiateMVars e
+        let sz := if smt.alethe.batchSize.get (← getOptions) == 0 then 0 else sharedSize e
+        modifyD fun st => { st with
+          pending := st.pending.push
+            { fvar := h.fvarId!, concl := s.concl, proof := e, id := s.id, rule := s.countedRule },
+          pendingSize := st.pendingSize + sz }
+        if ← batchFull then flushBatch
     if s.lits.isEmpty then
       modifyD fun st => { st with stats := { st.stats with emptyClause := true } }
-    addHypothesis s
+    return h
   else
     match e? with
     | some e =>
@@ -408,6 +558,9 @@ def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult :
                          reconstructors := rs, lctx, baseLctx := lctx,
                          localInsts := ← Meta.getLocalInstances, term : DState }
     runCommands r.proof.cmds ref
+    -- steps still waiting for the kernel, and calls still running
+    flushBatch ref
+    joinAll ref
     let st ← ref.get
     let ps := listExpr as.toList (mkSort .zero)
     let type := mkApp (mkConst ``Not) (mkApp (mkConst ``andN) ps)

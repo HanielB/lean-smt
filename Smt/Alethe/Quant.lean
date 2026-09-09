@@ -60,13 +60,23 @@ def reconstructBindClause (s : Step) : ReconstructM Expr := do
   let some a := s.anchor | throwError "bind outside of an anchor"
   let some last := a.last | throwError "bind: empty subproof"
   let n := s.lits.size
-  let quant := s.lits[n-1]!
-  if quant.getKind! != .FORALL then throwError "bind: expected a universal quantifier last"
   if last.lits.size != n then throwError "bind: the subproof's clause has {last.lits.size} literals, expected {n}"
-  let ps ← mkPropList (last.lits.extract 0 (n-1))
-  -- the subproof's proof with the anchor's variables abstracted, innermost first
+  -- the literal the step closes as a quantifier: the others pass through untouched, and it need
+  -- not be the last one (the core pass emits it wherever the subproof's clause has its body)
+  let some k := (List.range n).find? (fun i => s.lits[i]!.getKind! == .FORALL && s.lits[i]! != last.lits[i]!)
+    | throwError "bind: no quantified literal to close in {s.lits}"
+  let quant := s.lits[k]!
+  let others := last.lits.eraseIdx! k
+  let ps ← mkPropList others
+  -- the subproof's proof with the anchor's variables abstracted, innermost first, and its clause
+  -- reordered so that the literal to close is last
   let mut h := zetaAssigns a (← instantiateMVars last.proof)
-  let mut body ← reconstructTerm last.lits[n-1]!
+  let tgt := others.push last.lits[k]!
+  if tgt != last.lits then
+    let some h' ← reindexClause last.lits h tgt
+      | throwError "bind: cannot move the quantified literal of {last.lits} to the end"
+    h := h'
+  let mut body ← reconstructTerm last.lits[k]!
   for y in a.vars.reverse do
     let fv := y.2.2
     let hy ← Meta.mkLambdaFVars #[fv] h        -- ∀ y, orN (ps ++ [ψ y])
@@ -75,7 +85,7 @@ def reconstructBindClause (s : Step) : ReconstructM Expr := do
     h := mkApp4 (mkConst ``orN_forall [u]) (← Meta.inferType fv) ps psi hy
     body ← Meta.mkForallFVars #[fv] body
   -- `orN (ps ++ [∀ xs, ψ])` is the stated clause up to the list structure
-  let cc := (last.lits.extract 0 (n-1)).push quant
+  let cc := others.push quant
   concludeClause s cc h
 
 /-- `bind`: from the subproof's `φ = ψ` conclude `(∀ xs, φ) = (∀ ys, ψ)`. -/
@@ -370,7 +380,15 @@ def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
       es := es.push (← reconstructTerm v)
     let hq ← reconstructTerm q
     let hf ← Meta.withLocalDeclD `h hq fun h => Meta.mkLambdaFVars #[h] (mkAppN h es)
-    addThm s.concl (← Meta.mkAppM ``Prop.impliesElim #[hf])
+    let mut pr ← Meta.mkAppM ``Prop.impliesElim #[hf]
+    -- the instantiated body carries the instances of the quantified body, the stated conclusion
+    -- those synthesis finds for the instance itself
+    let ty ← Meta.inferType pr
+    unless ← Meta.isDefEq ty s.concl do
+      let some heq ← alignInstances ty s.concl
+        | throwError "forall_inst: the instance differs from the stated conclusion:{indentExpr ty}\n≠{indentExpr s.concl}"
+      pr ← Meta.mkAppM ``Eq.mp #[heq, pr]
+    addThm s.concl pr
   | "bind" => addThm s.concl (← reconstructBind s)
   | "onepoint" => addThm s.concl (← reconstructOnepoint s)
   | "let" => addThm s.concl (← reconstructLet s)

@@ -78,9 +78,11 @@ def withChoices (cs : List cvc5.Term) (k : ReconstructM α) : ReconstructM α :=
     let e : Q(($α → Prop) → $α) := q(@Classical.epsilon $α $inst)
     withReader (fun r => { r with userNames := r.userNames.insert c.getSymbol! e }) (withChoices cs k)
 
-/-- Check the Alethe proof in `proofPath` against the SMT-LIB problem in `problemPath`. -/
-def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax := false) :
-    MetaM CheckResult := do
+/-- Check the Alethe proof in `proofPath` against the SMT-LIB problem in `problemPath`. With `term`, the whole proof is reconstructed as
+    one term and sent to the kernel in a single call (the shape lean-cpc-checker uses for cvc5's
+    proofs); otherwise each step is checked on its own in a minimal local context. -/
+def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax := false)
+    (term := false) : MetaM CheckResult := do
   let _ := lax
   -- a proof is one command with thousands of steps: no heartbeat budget
   withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := 0, maxRecDepth := 100000 }) do
@@ -97,19 +99,42 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
       match ← cvc5.run (realize parsed) with
       | .ok r => pure r
       | .error e => throwError "cvc5 failed to parse the input: {e}"
-    let (type, stats) ← timed "reconstruct" do
+    let ((type, value?), stats) ← timed "reconstruct" do
       let ctx : Reconstruct.Context := { native }
       -- symbols introduced by the proof (anchor variables, choice constants) are not the problem's
       let skip : Array String := realized.renamed.map (fun (x : String × String) => x.1)
         ++ realized.choices.map (fun (c : cvc5.Term) => c.getSymbol!)
-      let ((type, stats), _) ← (withProblemSymbols realized.problem skip fun xs => do
+      let ((type, value?, stats), _) ← (withProblemSymbols realized.problem skip fun xs => do
         if smt.alethe.progress.get (← getOptions) > 0 then
           progressLine s!"[alethe] {xs.size} problem symbols introduced"
         withChoices realized.choices.toList do
-          let r ← reconstructProof realized
+          let r ← reconstructProof realized (term := term)
           let type ← Meta.mkForallFVars xs r.type
-          return (type, r.stats)).run ctx {}
-      pure (type, stats)
+          -- the trusted steps are metavariables of the term; `sorry` stands for them, as in
+          -- lean-cpc-checker (they are already counted in the statistics)
+          for mv in (← getThe Reconstruct.State).skippedGoals do
+            unless ← mv.isAssigned do
+              mv.assign (← Meta.mkSorry (← mv.getType) false)
+          let value? ← match r.proof with
+            | some v => some <$> Meta.mkLambdaFVars xs (← instantiateMVars v)
+            | none => pure none
+          return (type, value?, r.stats)).run ctx {}
+      pure ((type, value?), stats)
+    let mut stats := stats
+    if let some value := value? then
+      -- one kernel call for the whole proof
+      let t₀ ← IO.monoMsNow
+      let e := mkApp2 (mkConst ``id [.zero]) type value
+      let env ← getEnv
+      let r ← IO.lazyPure fun _ => Kernel.check env {} e
+      let t₁ ← IO.monoMsNow
+      stats := { stats with kernelMs := t₁ - t₀ }
+      match r with
+      | .ok _ => stats := { stats with checked := stats.checked + 1 }
+      | .error ex =>
+        let msg ← (ex.toMessageData (← getOptions)).toString
+        stats := { stats with failures := stats.failures.push ("<proof>", "term", s!"kernel: {msg}"),
+                              trusted := stats.trusted.insert "term-mode-kernel" 1 }
     modify fun (ts : Array (String × Nat)) => ts.push ("kernel", stats.kernelMs)
     return ({ type, stats, timings := #[] } : CheckResult)).run #[]
   return { r with timings }

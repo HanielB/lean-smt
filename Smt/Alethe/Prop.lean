@@ -143,6 +143,17 @@ partial def bfunElimProve (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) 
     let heq ← addTac (← Meta.mkEq phi psi) fun mv => bfunElimProve mv atoms.toList #[]
     addThm s.concl (← Meta.mkAppM ``Eq.mp #[heq, pr.proof])
   | "connective_def" | "qnt_duality" => reconstructConnectiveDef s
+  | "ite_then_intro" | "ite_else_intro" =>
+    -- (cl (not c) (= (ite c t e) t)) and (cl c (= (ite c t e) e)): the selection axioms the core
+    -- pass uses for `ite_intro` and for the `ite` form of `bfun_elim`
+    if s.lits.size != 2 then throwError "{s.rule}: expected two literals"
+    let eq ← reconstructTerm s.lits[1]!
+    let some (_, lhs, _) := eq.eq? | throwError "{s.rule}: {s.lits[1]!} is not an equality"
+    let_expr ite α c inst t e := lhs
+      | throwError "{s.rule}: {s.lits[1]!} does not rewrite an if-then-else"
+    let u ← Meta.getLevel α
+    let thm := if s.rule == "ite_then_intro" then ``ite_then_intro else ``ite_else_intro
+    addThm s.concl (mkAppN (mkConst thm [u]) #[α, c, inst, t, e])
   | "true" => addThm s.concl q(trivial)
   | "false" => addThm s.concl q(not_false_cl)
   | "not_not" =>

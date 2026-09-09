@@ -31,6 +31,27 @@ register_option smt.alethe.progress : Nat := {
   descr := "print a progress line to stderr every N steps, and slow or fallback steps (0: off)"
 }
 
+/-- A proof of `a = b` for terms that differ only in instance arguments of a subsingleton type
+    (`Decidable` instances, in practice), or `none` when they differ elsewhere.
+
+    A term reconstructed after a substitution keeps the instances of the term it came from, while
+    the same term reconstructed on its own gets the instances that synthesis finds for it: `ite
+    (¬x) …` under a quantified `x` carries `Classical.propDecidable`, and its instance at `x :=
+    false` carries the structural one. The two are propositionally but not definitionally equal. -/
+partial def alignInstances (a b : Expr) : MetaM (Option Expr) := do
+  if a == b then
+    return some (← Meta.mkEqRefl a)
+  let ta ← Meta.inferType a
+  if (← Meta.isDefEq ta (← Meta.inferType b)) then
+    if let .some _ ← Meta.trySynthInstance (← Meta.mkAppM ``Subsingleton #[ta]) then
+      return some (← Meta.mkAppM ``Subsingleton.elim #[a, b])
+  match a, b with
+  | .app f x, .app g y =>
+    let some hf ← alignInstances f g | return none
+    let some hx ← alignInstances x y | return none
+    try return some (← Meta.mkCongr hf hx) catch _ => return none
+  | _, _ => return none
+
 /-- Write a progress line to the process's standard error directly: during command elaboration
     Lean captures `IO.eprintln` into the message log, which only appears when the command ends. -/
 def progressLine (s : String) : IO Unit :=
