@@ -139,6 +139,9 @@ structure DState where
   pending : Array PendingStep := #[]
   /-- Term nodes held by `pending`, when a size budget is set. -/
   pendingSize : Nat := 0
+  /-- The nodes already counted for the batch: a step's proof shares most of its formulas with the
+      steps around it, so the budget must count each node once and traverse it once. -/
+  pendingSeen : ExprSet := {}
   /-- Kernel calls running concurrently, oldest first. -/
   inflight : Array KernelJob := #[]
 
@@ -216,7 +219,8 @@ private partial def sharedSizeAux (e : Expr) : StateM ExprSet Nat := do
   | .proj _ _ b => return 1 + (← sharedSizeAux b)
   | _ => return 1
 
-def sharedSize (e : Expr) : Nat := (sharedSizeAux e).run' {}
+/-- The nodes of `e` that `seen` does not already have, and `seen` extended with them. -/
+def sharedSizeIncr (e : Expr) (seen : ExprSet) : Nat × ExprSet := (sharedSizeAux e).run seen
 
 /-- The local context for a kernel call: the problem's symbols and assertions plus only the step
     hypotheses `e` mentions, so that the cost of a call does not grow with the number of steps
@@ -235,8 +239,9 @@ def kernelLCtx (e : Expr) : AletheM LocalContext := do
     it, which is what checking the steps one by one asks; the binders keep those hypotheses opaque,
     and one call shares its inference cache over the whole batch. -/
 def batchTerm (ps : Array PendingStep) : Expr := Id.run do
-  -- each proof is abstracted once, over the hypotheses of the steps before it in the batch;
-  -- abstracting the partial term instead would rebuild it at every step
+  -- each proof is abstracted once, over the hypotheses of the steps before it in the batch
+  -- (abstracting the partial term instead would rebuild it at every step); `Expr.abstract` scans
+  -- its array once per occurrence, so a batch is best bounded by its number of steps as well
   let mut abstracted : Array Expr := #[]
   let mut earlier : Array Expr := #[]
   for p in ps do
@@ -291,7 +296,7 @@ partial def drainTo (n : Nat) : AletheM Unit := do
 def flushBatch : AletheM Unit := do
   let st ← getD
   if st.pending.isEmpty then return
-  modifyD fun st => { st with pending := #[], pendingSize := 0 }
+  modifyD fun st => { st with pending := #[], pendingSize := 0, pendingSeen := {} }
   let steps := st.pending
   let e := batchTerm steps
   let lctx ← kernelLCtx e
@@ -371,11 +376,13 @@ def concludeStep (s : Step) (e? : Option Expr) : AletheM Expr := do
         countChecked
       else
         let e ← instantiateMVars e
-        let sz := if smt.alethe.batchSize.get (← getOptions) == 0 then 0 else sharedSize e
-        modifyD fun st => { st with
-          pending := st.pending.push
-            { fvar := h.fvarId!, concl := s.concl, proof := e, id := s.id, rule := s.countedRule },
-          pendingSize := st.pendingSize + sz }
+        let budget := smt.alethe.batchSize.get (← getOptions)
+        modifyD fun st =>
+          let (sz, seen) := if budget == 0 then (0, st.pendingSeen) else sharedSizeIncr e st.pendingSeen
+          { st with
+            pending := st.pending.push
+              { fvar := h.fvarId!, concl := s.concl, proof := e, id := s.id, rule := s.countedRule },
+            pendingSize := st.pendingSize + sz, pendingSeen := seen }
         if ← batchFull then flushBatch
     if s.lits.isEmpty then
       modifyD fun st => { st with stats := { st.stats with emptyClause := true } }
