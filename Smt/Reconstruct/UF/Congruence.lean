@@ -76,25 +76,33 @@ def smtCongrUF (mv : MVarId) (e₁ e₂ : Expr) (hs : Array Expr) : MetaM Unit :
   mv.assign h
 
 def smtCongrLeftAssocOp (mv : MVarId) (op : Expr) (hs : Array Expr) : MetaM Unit := do
-  let ((α : Q(Type)), _) := (← Meta.inferType op).arrow?.get!
+  let some ((α : Q(Type)), _) := (← Meta.inferType op).arrow?
+    | throwError "[smt_congr]: expected a binary operator, got {op}"
   let op : (Q($α → $α → $α)) ← pure op
-  let (_, x₁, x₂) := (← Meta.inferType hs[0]!).eq?.get!
+  let some h₀ := hs[0]? | throwError "[smt_congr]: no premises"
+  let some (_, x₁, x₂) := (← Meta.inferType h₀).eq?
+    | throwError "[smt_congr]: premise is not an equality: {← Meta.inferType h₀}"
   let f := fun ((x₁ : Q($α)), (x₂ : Q($α)), (h₁ : Q($x₁ = $x₂))) h₂ => do
-    let (_, (y₁ : Q($α)), (y₂ : Q($α))) := (← Meta.inferType h₂).eq?.get!
+    let some (_, (y₁ : Q($α)), (y₂ : Q($α))) := (← Meta.inferType h₂).eq?
+      | throwError "[smt_congr]: premise is not an equality: {← Meta.inferType h₂}"
     let h₂ : Q($y₁ = $y₂) ← pure h₂
     return (q($op $x₁ $y₁), q($op $x₂ $y₂), q(congr (congrArg $op $h₁) $h₂))
-  let (_, _, h) ← hs[1:].foldlM f (x₁, x₂, hs[0]!)
+  let (_, _, h) ← hs[1:].foldlM f (x₁, x₂, h₀)
   mv.assign h
 
 def smtCongrRightAssocOp (mv : MVarId) (op : Expr) (hs : Array Expr) : MetaM Unit := do
-  let ((α : Q(Type)), _) := (← Meta.inferType op).arrow?.get!
+  let some ((α : Q(Type)), _) := (← Meta.inferType op).arrow?
+    | throwError "[smt_congr]: expected a binary operator, got {op}"
   let op : (Q($α → $α → $α)) ← pure op
-  let (_, y₁, y₂) := (← Meta.inferType hs[hs.size - 1]!).eq?.get!
+  let some hₙ := hs[hs.size - 1]? | throwError "[smt_congr]: no premises"
+  let some (_, y₁, y₂) := (← Meta.inferType hₙ).eq?
+    | throwError "[smt_congr]: premise is not an equality: {← Meta.inferType hₙ}"
   let f := fun h₁ ((y₁ : Q($α)), (y₂ : Q($α)), (h₂ : Q($y₁ = $y₂))) => do
-    let (_, (x₁ : Q($α)), (x₂ : Q($α))) := (← Meta.inferType h₁).eq?.get!
+    let some (_, (x₁ : Q($α)), (x₂ : Q($α))) := (← Meta.inferType h₁).eq?
+      | throwError "[smt_congr]: premise is not an equality: {← Meta.inferType h₁}"
     let h₁ : Q($x₁ = $x₂) ← pure h₁
     return (q($op $x₁ $y₁), q($op $x₂ $y₂), q(congr (congrArg $op $h₁) $h₂))
-  let (_, _, h) ← hs[:hs.size - 1].foldrM f (y₁, y₂, hs[hs.size - 1]!)
+  let (_, _, h) ← hs[:hs.size - 1].foldrM f (y₁, y₂, hₙ)
   mv.assign h
 
 def smtCongr (mv : MVarId) (hs : Array Expr) : MetaM Unit := mv.withContext do

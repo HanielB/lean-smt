@@ -361,6 +361,11 @@ def concludeStep (s : Step) (e? : Option Expr) : AletheM Expr := do
         return e
       else
         countChecked
+        -- the premise a later step sees must have the type the proof states for it, as the step
+        -- hypothesis of the step-by-step mode does: a reconstructor that reads a premise's type
+        -- (congruence over an n-ary operator, for one) would otherwise see whatever type the
+        -- proof term happens to infer to, which is only definitionally the stated one
+        let e ← Meta.mkExpectedTypeHint e s.concl
         if s.lits.isEmpty then modifyD fun st => { st with refutation := some e }
         return e
     | none =>
