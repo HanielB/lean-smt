@@ -10,7 +10,8 @@
 #                         needed for the Real reconstruction and its tests)
 #   --carcara-src DIR     build Carcara from an existing checkout instead of cloning
 #   --carcara-remote URL  clone from this remote          (default $CARCARA_REMOTE, else origin below)
-#   --carcara-ref REF     check out this branch or commit (default $CARCARA_REF, else bv-fixes)
+#   --carcara-ref REF     check out this branch or commit (default $CARCARA_REF, else the
+#                         revision this branch was developed against)
 #   --skip-lean           do not touch the Lean side
 #   --skip-carcara        do not build Carcara
 #   -h, --help
@@ -28,7 +29,7 @@ skip_lean=false
 skip_carcara=false
 carcara_src=""
 carcara_remote=${CARCARA_REMOTE:-https://github.com/hanielb/carcara.git}
-carcara_ref=${CARCARA_REF:-bv-fixes}
+carcara_ref=${CARCARA_REF:-4ff0dc5a}
 prefix="$repo/.lake/alethe"
 
 while [ $# -gt 0 ]; do
@@ -110,37 +111,13 @@ EOF
       echo "cloning $carcara_remote"
       git clone -q "$carcara_remote" "$carcara_src"
     fi
-    git -C "$carcara_src" checkout -q "$carcara_ref" \
+    git -C "$carcara_src" checkout -q "$carcara_ref" 2>/dev/null \
+      || git -C "$carcara_src" checkout -q "origin/$carcara_ref" \
       || { echo "error: no such revision '$carcara_ref' on $carcara_remote" >&2; exit 1; }
   else
     echo "building from $carcara_src"
   fi
   echo "at $(git -C "$carcara_src" log --oneline -1)"
-
-  # `bv-fixes` after the coreAlethe merge calls `TermPool::free_vars_ref`, which the merged tree
-  # does not define; the accessor returns a `Cow` and is named `free_vars`. Patch a checkout that
-  # still has the old calls, so that a revision predating the fix still builds.
-  legacy="$carcara_src/src/elaborator/core/legacy.rs"
-  if [ -f "$legacy" ] && grep -q 'free_vars_ref' "$legacy"; then
-    echo "adapting free_vars_ref -> free_vars in $(basename "$legacy")"
-    python3 - "$legacy" <<'PY'
-import io, sys
-p = sys.argv[1]
-s = io.open(p, encoding='utf-8').read()
-s = s.replace("let free = b.pool.free_vars_ref(body).clone();",
-              "let free = b.pool.free_vars(body).into_owned();")
-s = s.replace("""    let free = b.pool.free_vars_ref(term);
-    if !units.keys().any(|var| free.contains(var)) {""",
-              """    let mentions_unit = {
-        let free = b.pool.free_vars(term);
-        units.keys().any(|var| free.contains(var))
-    };
-    if !mentions_unit {""")
-io.open(p, 'w', encoding='utf-8').write(s)
-PY
-    grep -q 'free_vars_ref' "$legacy" \
-      && { echo "error: could not adapt $legacy; patch it by hand" >&2; exit 1; } || true
-  fi
 
   ( cd "$carcara_src" && cargo build --release )
   mkdir -p "$prefix/bin"
