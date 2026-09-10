@@ -617,7 +617,14 @@ def polyNorm (mv : MVarId) : MetaM Unit := do
   let rctx : Q(PolyNorm.RatContext) ← if h : 0 < rs.size
     then do let rs : Q(RArray Rat) ← (RArray.ofArray rs h).toExpr q(Rat) id; pure q(«$rs».get)
     else pure q(fun _ => 0)
-  let h : Q(«$l».toPolynomial = «$r».toPolynomial) := .app q(@Eq.refl.{1} PolyNorm.Polynomial) q(«$l».toPolynomial)
+  -- `decide`, not `Eq.refl`: given two `toPolynomial` applications the kernel unifies them by
+  -- unfolding both in lockstep instead of evaluating each, which is catastrophic once the
+  -- coefficients are large. Deciding the equality forces evaluation.
+  let inst : Q(Decidable («$l».toPolynomial = «$r».toPolynomial)) ←
+    Meta.synthInstance q(Decidable («$l».toPolynomial = «$r».toPolynomial))
+  -- `.app`, as `nativePolyNorm` does: the `rfl` is what the kernel checks, not the elaborator
+  let h : Q(«$l».toPolynomial = «$r».toPolynomial) :=
+    .app q(@of_decide_eq_true («$l».toPolynomial = «$r».toPolynomial) $inst) q(Eq.refl true)
   mv.assign q(@PolyNorm.RatExpr.denote_eq_from_toPolynomial_eq $ictx $rctx $l $r $h)
 
 def nativePolyNorm (mv : MVarId) : MetaM Unit := do
