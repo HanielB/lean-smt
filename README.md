@@ -87,6 +87,16 @@ import Smt
 #check_alethe "problem.smt2" "problem.alethe"
 -- valid: checked 481 steps, trusted 0, holes 0
 ```
+`scripts/setup-alethe.sh` installs everything that needs: the Lean toolchain, the
+lean-smt build (and with it the cvc5 parser plugin), and a Carcara binary.
+```
+scripts/setup-alethe.sh                 # Mathlib build, Carcara cloned and built
+scripts/setup-alethe.sh --no-mathlib    # the configuration the Alethe work uses
+scripts/setup-alethe.sh --carcara-src ~/carcara   # build Carcara from a checkout you have
+```
+It ends by printing the `CARCARA` line to add to your profile, and by checking a
+proof in both of the modes below.
+
 To check a proof from the command line, use `scripts/check-alethe.sh`:
 ```
 scripts/check-alethe.sh problem.smt2 problem.alethe
