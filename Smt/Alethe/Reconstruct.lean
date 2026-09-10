@@ -262,6 +262,10 @@ def batchTerm (ps : Array PendingStep) : Expr := Id.run do
     body := mkApp (Expr.lam (Name.mkSimple ps[j]!.id) ps[j]!.concl body .default) abstracted[j]!
   return body
 
+/-- The first line of a message: kernel errors print the whole offending term after it, which is
+    large and full of unstable fvar names, so only the headline is recorded as the trust reason. -/
+def firstLine (s : String) : String := (s.splitOn "\n").headD s
+
 /-- Record the outcome of one kernel call. A rejected batch of more than one step is re-checked
     step by step, so that what is trusted is what the kernel actually rejected. -/
 def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (ms : Nat) :
@@ -273,7 +277,7 @@ def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (
   | .error ex =>
     if h : steps.size == 1 then
       let p := steps[0]'(by simp at h; omega)
-      recordTrustRule p.id p.rule s!"kernel: {← (ex.toMessageData (← getOptions)).toString}"
+      recordTrustRule p.id p.rule s!"kernel: {firstLine (← (ex.toMessageData (← getOptions)).toString)}"
     else
       let env ← getEnv
       for p in steps do
@@ -282,7 +286,7 @@ def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (
         match ← IO.lazyPure fun _ => Kernel.check env lctx e with
         | .ok _ => countChecked
         | .error ex =>
-          recordTrustRule p.id p.rule s!"kernel: {← (ex.toMessageData (← getOptions)).toString}"
+          recordTrustRule p.id p.rule s!"kernel: {firstLine (← (ex.toMessageData (← getOptions)).toString)}"
 
 /-- Wait for the oldest kernel call in flight and record its outcome. -/
 def joinOne : AletheM Unit := do

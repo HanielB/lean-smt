@@ -228,8 +228,12 @@ def allInt (lits : Array cvc5.Term) : Bool :=
     | none => true
 
 /-- `la_generic`. -/
-def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
+partial def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
   if s.lits.isEmpty then throwError "la_generic: empty clause"
+  -- `la_tautology`'s second form is one `or` literal over the bounds: prove the clause of its
+  -- disjuncts, which reconstructs to the same disjunction
+  if s.lits.size == 1 && s.lits[0]!.getKind! == .OR then
+    return ← reconstructLaGeneric { s with lits := nary .OR s.lits[0]! }
   if (s.lits.findSome? negatedLiteral).isNone then throwError "la_generic: no arithmetic literal"
   let int := allInt s.lits
   let names := if int then intNames else ratNames
@@ -247,6 +251,9 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
     let c ← match s.args[i]? >>= Arg.rat? with
       | some c => pure c
       | none =>
+        -- `la_tautology` has no coefficients at all: its two forms — one literal whose sides
+        -- differ by a constant, or two bounds on the same term — hold with unit multipliers
+        if s.args.isEmpty then pure 1 else
         match p.coeffs.toList.filter (·.2 != 0) with
         | [(v, c₁)] =>
           if c₁ == 0 then throwError "bounded_farkas: the bound {l} has a zero coefficient"
@@ -489,6 +496,17 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
     let inst := epsArgs[1]!
     let f := Expr.lam `x (← Meta.inferType b) (lhs.abstract #[b]) .default
     addThm s.concl (← Meta.mkAppOptM ``div_by_zero_intro #[none, none, inst, f, b, z, none])
+  | "lia_generic" =>
+    -- veriT's unspecified linear integer reasoning: the clause is a tautology of linear integer
+    -- arithmetic, which `omega` decides from the negations of its literals (a step outside
+    -- omega's fragment is trusted)
+    addTac s.concl fun mv => do
+      let before := (← mv.getDecl).lctx
+      let some g ← mv.falseOrByContra | return
+      g.withContext do
+        let facts := (← getLCtx).foldl (init := #[]) fun acc d =>
+          if d.isImplementationDetail || before.contains d.fvarId then acc else acc.push d.toExpr
+        Lean.Elab.Tactic.Omega.omega facts.toList g {}
   | "la_mult_pos" => reconstructLaMult s true
   | "la_mult_neg" => reconstructLaMult s false
   | "la_disequality" | "la_totality" =>

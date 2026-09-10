@@ -181,29 +181,59 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
   let matchesEq (pr : Premise) (a b : cvc5.Term) : Bool :=
     pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL &&
       ((pr.lits[0]![0]! == a && pr.lits[0]![1]! == b) || (pr.lits[0]![0]! == b && pr.lits[0]![1]! == a))
-  let mut hs := #[]
-  for i in [start:l.getNumChildren] do
-    if l[i]! == r[i]! then
-      hs := hs.push (← mkRefl l[i]!)
-    else if let some pr := s.premises.find? (matchesEq · l[i]! r[i]!) then
-      hs := hs.push (← orient pr l[i]! r[i]!)
-    else
-      -- the defeq checks stay behind the syntactic ones (an `else if ← …` would hoist them out
-      -- of the conditional and run them for every argument)
-      if ← termEq l[i]! r[i]! then
-        -- equal up to the context's substitutions
-        hs := hs.push (← mkEqRefl' l[i]! r[i]!)
+  -- the proof of `a = b` for each argument pair
+  let align (pairs : Array (cvc5.Term × cvc5.Term)) : ReconstructM (Array Expr) := do
+    let mut hs := #[]
+    for (a, b) in pairs do
+      if a == b then
+        hs := hs.push (← mkRefl a)
+      else if let some pr := s.premises.find? (matchesEq · a b) then
+        hs := hs.push (← orient pr a b)
       else
-        -- a premise equal to the pair up to the substitutions
-        let mut found := none
-        for pr in s.premises do
-          if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
-            let (x, y) ← eqSides pr.lits[0]!
-            if ← (termEq x l[i]! <&&> termEq y r[i]!) <||> (termEq x r[i]! <&&> termEq y l[i]!) then
-              found := some pr
-              break
-        let some pr := found | throwError "cong: no premise for {l[i]!} = {r[i]!}"
-        hs := hs.push (← orient pr l[i]! r[i]!)
+        -- the defeq checks stay behind the syntactic ones (an `else if ← …` would hoist them out
+        -- of the conditional and run them for every argument)
+        if ← termEq a b then
+          -- equal up to the context's substitutions
+          hs := hs.push (← mkEqRefl' a b)
+        else
+          -- a premise equal to the pair up to the substitutions
+          let mut found := none
+          for pr in s.premises do
+            if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
+              let (x, y) ← eqSides pr.lits[0]!
+              if ← (termEq x a <&&> termEq y b) <||> (termEq x b <&&> termEq y a) then
+                found := some pr
+                break
+          let some pr := found | throwError "cong: no premise for {a} = {b}"
+          hs := hs.push (← orient pr a b)
+    return hs
+  let pairs := (List.range l.getNumChildren).toArray[start:].toArray.map fun i => (l[i]!, r[i]!)
+  if k == .EQUAL && l.getNumChildren == 2 then
+    -- Carcara's special case: between two binary equalities, either side's arguments may be
+    -- flipped (veriT orders the arguments of an equality as it likes), so `(= (= a b) (= c d))`
+    -- may be justified by `a = c, b = d`, `b = c, a = d`, `a = d, b = c` or `b = d, a = c`. The
+    -- flipped sides are put straight by `eq_symm` around the congruence
+    let (a, b, c, d) := (l[0]!, l[1]!, r[0]!, r[1]!)
+    match ← (try some <$> align pairs catch _ => pure none) with
+    | some hs => return ← addTac s.concl (UF.smtCongr · hs)
+    | none =>
+      let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort a.getSort!
+      for (lf, rf) in [(true, false), (false, true), (true, true)] do
+        let (l₁, l₂) := if lf then (b, a) else (a, b)
+        let (r₁, r₂) := if rf then (d, c) else (c, d)
+        let some hs ← (try some <$> align #[(l₁, r₁), (l₂, r₂)] catch _ => pure none) | continue
+        let goal ← Meta.mkEq (← Meta.mkEq (← reconstructTerm l₁) (← reconstructTerm l₂))
+          (← Meta.mkEq (← reconstructTerm r₁) (← reconstructTerm r₂))
+        let mv ← Meta.mkFreshExprMVar goal
+        UF.smtCongr mv.mvarId! hs
+        let mut h ← instantiateMVars mv
+        if lf then  -- (a = b) = (b = a), then (b = a) = …
+          h ← Meta.mkEqTrans (mkApp3 (mkConst ``UF.eq_symm [u]) α (← reconstructTerm a) (← reconstructTerm b)) h
+        if rf then  -- … = (d = c), then (d = c) = (c = d)
+          h ← Meta.mkEqTrans h (mkApp3 (mkConst ``UF.eq_symm [u]) α (← reconstructTerm d) (← reconstructTerm c))
+        return ← addThm s.concl h
+      throwError "cong: no orientation of {l} and {r} matches the premises"
+  let hs ← align pairs
   if k == .DISTINCT then
     -- `distinct` reconstructs to a conjunction of disequalities, not an application: rewrite the
     -- arguments one at a time
@@ -374,6 +404,20 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let (l, r) ← eqSides s.lits[0]!
     let le ← reconstructTerm l
     let re ← reconstructTerm r
+    if r.getKind! == .CONST_BOOLEAN && !r.getBooleanValue! then
+      -- three or more Boolean arguments cannot be pairwise distinct: `(= (distinct ps) false)`.
+      -- The reconstruction lists the pairs `(i, j)` with `i < j` in lexicographic order, so the
+      -- disequalities of the first three arguments are the conjuncts 0, 1 and n - 1
+      let n := l.getNumChildren
+      if n < 3 then throwError "distinct_elim: {l} is not false"
+      let ps ← collectPropsInAndChain le
+      let sps := listExpr ps (mkSort .zero)
+      let h ← Meta.withLocalDeclD `h le fun h => do
+        let conj (i : Nat) : ReconstructM Expr := do
+          let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
+          return mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
+        Meta.mkLambdaFVars #[h] (← Meta.mkAppM ``distinct_bool_false #[← conj 0, ← conj 1, ← conj (n - 1)])
+      return ← addThm s.concl (← Meta.mkAppM ``eq_false #[h])
     if ← Meta.isDefEq le re then return ← addThm s.concl (← mkRefl l)
     let pairOf (e : Expr) : Option (Expr × Expr) :=
       match e.ne? with

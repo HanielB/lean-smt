@@ -1,0 +1,5 @@
+(assume a0 (<= (* 2 x) 5))
+(assume a1 (>= (+ x (f y)) 3))
+(assume a2 (<= (f y) 0))
+(step t1 (cl (not (<= (* 2 x) 5)) (not (>= (+ x (f y)) 3)) (not (<= (f y) 0))) :rule lia_generic)
+(step t2 (cl) :rule resolution :premises (t1 a0 a1 a2))

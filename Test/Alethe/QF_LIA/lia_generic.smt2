@@ -1,0 +1,8 @@
+(set-logic QF_LIA)
+(declare-const x Int)
+(declare-const y Int)
+(declare-fun f (Int) Int)
+(assert (<= (* 2 x) 5))
+(assert (>= (+ x (f y)) 3))
+(assert (<= (f y) 0))
+(check-sat)

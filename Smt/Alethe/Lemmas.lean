@@ -225,6 +225,20 @@ theorem qnt_exists_true {α : Sort u} [h : Nonempty α] : (∃ _ : α, True) = T
 theorem qnt_exists_false {α : Sort u} : (∃ _ : α, False) = False :=
   propext ⟨fun h => h.elim fun _ hf => hf, False.elim⟩
 
+/-- `distinct_elim` over three or more Booleans: no three propositions are pairwise distinct. -/
+theorem distinct_bool_false {p q r : Prop} (hpq : p ≠ q) (hpr : p ≠ r) (hqr : q ≠ r) : False :=
+  (Classical.em p).elim
+    (fun hp => (Classical.em q).elim
+      (fun hq => hpq (propext ⟨fun _ => hq, fun _ => hp⟩))
+      (fun hq => (Classical.em r).elim
+        (fun hr => hpr (propext ⟨fun _ => hr, fun _ => hp⟩))
+        (fun hr => hqr (propext ⟨fun h => absurd h hq, fun h => absurd h hr⟩))))
+    (fun hp => (Classical.em q).elim
+      (fun hq => (Classical.em r).elim
+        (fun hr => hqr (propext ⟨fun _ => hr, fun _ => hq⟩))
+        (fun hr => hpr (propext ⟨fun h => absurd h hp, fun h => absurd h hr⟩)))
+      (fun hq => hpq (propext ⟨fun h => absurd h hp, fun h => absurd h hq⟩)))
+
 /-! ### veriT rules: `la_rw_eq`, `comp_simplify` -/
 
 theorem Int.la_rw_eq {a b : Int} : (a = b) = (a ≤ b ∧ b ≤ a) :=
