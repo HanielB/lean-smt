@@ -1,0 +1,5 @@
+(set-logic UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(assert (and (forall ((x U) (y U)) false) (exists ((z U)) true)))
+(check-sat)

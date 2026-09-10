@@ -1,0 +1,8 @@
+(assume h1 (and (forall ((x U) (y U)) false) (exists ((z U)) true)))
+(step t1 (cl (= (forall ((x U) (y U)) false) false)) :rule qnt_simplify)
+(step t2 (cl (= (exists ((z U)) true) true)) :rule qnt_simplify)
+(step t3 (cl (forall ((x U) (y U)) false)) :rule and :premises (h1) :args (0))
+(step t4 (cl (not (= (forall ((x U) (y U)) false) false)) (not (forall ((x U) (y U)) false)) false) :rule equiv_pos2)
+(step t5 (cl false) :rule resolution :premises (t4 t1 t3))
+(step t6 (cl (not false)) :rule false)
+(step t7 (cl) :rule resolution :premises (t5 t6))

@@ -211,6 +211,20 @@ theorem or_not_refl {α : Sort u} (t : α) (ps : List Prop) : orN ((¬t = t) :: 
   | nil => exact propext ⟨fun h => h rfl, fun h => h.elim⟩
   | cons p ps => exact propext ⟨fun h => h.elim (fun h => (h rfl).elim) id, fun h => .inr h⟩
 
+/-! ### `qnt_simplify`: a quantifier over a Boolean constant -/
+
+theorem qnt_forall_true {α : Sort u} : (∀ _ : α, True) = True :=
+  propext ⟨fun _ => trivial, fun _ _ => trivial⟩
+
+theorem qnt_forall_false {α : Sort u} [h : Nonempty α] : (∀ _ : α, False) = False :=
+  propext ⟨fun f => h.elim f, False.elim⟩
+
+theorem qnt_exists_true {α : Sort u} [h : Nonempty α] : (∃ _ : α, True) = True :=
+  propext ⟨fun _ => trivial, fun _ => h.elim fun x => ⟨x, trivial⟩⟩
+
+theorem qnt_exists_false {α : Sort u} : (∃ _ : α, False) = False :=
+  propext ⟨fun h => h.elim fun _ hf => hf, False.elim⟩
+
 /-! ### veriT rules: `la_rw_eq`, `comp_simplify` -/
 
 theorem Int.la_rw_eq {a b : Int} : (a = b) = (a ≤ b ∧ b ≤ a) :=

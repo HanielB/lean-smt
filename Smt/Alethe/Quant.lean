@@ -363,6 +363,43 @@ def reconstructOnepointExists (s : Step) (a : AnchorCtx) (last : Premise) : Reco
     Meta.mkLambdaFVars #[h] (← existsElimN h r kept.size elim)
   Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]]
 
+/-- `qnt_simplify`: `(Q x̄, c) = c` for a Boolean constant `c`. The binders are peeled one at a
+    time; the two directions that need a witness — `(∀ x, False)` and `(∃ x, True)` — take it from
+    the sort's `Nonempty` instance, which the problem's sorts carry. -/
+partial def qntSimplifyProof (e : Expr) : ReconstructM Expr := do
+  if e.isConstOf ``True || e.isConstOf ``False then return ← Meta.mkEqRefl e
+  let (α, body, isForall) ← match e with
+    | .forallE _ α b _ =>
+      if b.hasLooseBVars then throwError "qnt_simplify: the body mentions the bound variable"
+      pure (α, b, true)
+    | _ => match e.app2? ``Exists with
+      | some (α, .lam _ _ b _) =>
+        if b.hasLooseBVars then throwError "qnt_simplify: the body mentions the bound variable"
+        pure (α, b, false)
+      | _ => throwError "qnt_simplify: not a quantifier over a constant: {e}"
+  let hb ← qntSimplifyProof body                                  -- body = c
+  let some (_, _, c) := (← Meta.inferType hb).eq?
+    | throwError "qnt_simplify: malformed inner proof"
+  let u ← Meta.getLevel α
+  -- `Q x : α, body = Q x : α, c`, the binder being vacuous
+  let motive ← Meta.withLocalDeclD `p (mkSort .zero) fun p => do
+    let q ← if isForall then pure (Expr.forallE `x α p .default)
+            else Meta.mkAppOptM ``Exists #[α, Expr.lam `x α p .default]
+    Meta.mkLambdaFVars #[p] q
+  let hcong ← Meta.mkCongrArg motive hb
+  -- `Q x : α, c = c`
+  let name : Name := match isForall, c.isConstOf ``True with
+    | true,  true  => ``qnt_forall_true
+    | true,  false => ``qnt_forall_false
+    | false, true  => ``qnt_exists_true
+    | false, false => ``qnt_exists_false
+  let lemma ← if name == ``qnt_forall_true || name == ``qnt_exists_false then
+      pure (mkApp (mkConst name [u]) α)
+    else do
+      let inst ← Meta.synthInstance (mkApp (mkConst ``Nonempty [u]) α)
+      pure (mkApp2 (mkConst name [u]) α inst)
+  Meta.mkEqTrans hcong lemma
+
 def reconstructOnepoint (s : Step) : ReconstructM Expr := do
   let some a := s.anchor | throwError "onepoint: outside of an anchor"
   let some last := a.last | throwError "onepoint: empty subproof"
@@ -481,6 +518,10 @@ def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
 
 @[alethe_rule_reconstruct] def reconstructQuant : RuleReconstructor := fun s => do
   match s.rule with
+  | "qnt_simplify" =>
+    let t := s.lits[0]!
+    if t.getKind! != .EQUAL then throwError "qnt_simplify: expected an equality"
+    addThm s.concl (← qntSimplifyProof (← reconstructTerm t[0]!))
   | "forall_inst" =>
     -- (cl (or (not (forall xs φ)) φ[ts])) with :args ((:= x t) …)
     let t := s.lits[0]!
