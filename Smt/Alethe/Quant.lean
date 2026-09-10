@@ -54,6 +54,18 @@ def congrBinders (exists_ : Bool) (ys : Array Expr) (p q h : Expr) : MetaM (Expr
       return (ap, aq, mkApp4 (mkConst ``forall_congr [u]) α lp lq hx)
   ys.foldrM f (p, q, h)
 
+/-- The variables the conclusion's quantifier binds, as the anchor's fvars in binder order. The
+    anchor may declare more than those: when `bind` renames a variable, veriT lists both the old
+    and the new one, and only the new one is bound by the quantifier the step concludes. -/
+def bindVars (a : AnchorCtx) (quant : cvc5.Term) : ReconstructM (Array Expr) := do
+  let mut ys := #[]
+  for i in [0:quant[0]!.getNumChildren] do
+    let name := quant[0]![i]!.getSymbol!
+    let some v := a.vars.find? (fun (m, _, _) => m == name)
+      | throwError "bind: the anchor does not declare {name}, bound by {quant}"
+    ys := ys.push v.2.2
+  return ys
+
 /-- Generalized `bind`: the subproof over the anchor's variables `xs` concludes a clause
     `(cl ls ψ)` whose literals `ls` do not mention `xs`; the closing step is `(cl ls (∀ xs, ψ))`. -/
 def reconstructBindClause (s : Step) : ReconstructM Expr := do
@@ -77,8 +89,7 @@ def reconstructBindClause (s : Step) : ReconstructM Expr := do
       | throwError "bind: cannot move the quantified literal of {last.lits} to the end"
     h := h'
   let mut body ← reconstructTerm last.lits[k]!
-  for y in a.vars.reverse do
-    let fv := y.2.2
+  for fv in (← bindVars a quant).reverse do
     let hy ← Meta.mkLambdaFVars #[fv] h        -- ∀ y, orN (ps ++ [ψ y])
     let psi ← Meta.mkLambdaFVars #[fv] body     -- fun y => ψ y
     let u ← Meta.getLevel (← Meta.inferType fv)
@@ -96,7 +107,7 @@ def reconstructBind (s : Step) : ReconstructM Expr := do
   let some last := a.last | throwError "bind: empty subproof"
   let k := s.lits[0]![0]!.getKind!
   if k != .FORALL && k != .EXISTS then throwError "bind: unsupported binder {k}"
-  let ys := a.vars.map (·.2.2)
+  let ys ← bindVars a s.lits[0]![1]!
   let h ← instantiateMVars last.proof
   let h := zetaAssigns a h
   -- the recorded conclusion, not the proof term's type (a clause lemma may state it as an `orN`)

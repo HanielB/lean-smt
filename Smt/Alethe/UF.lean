@@ -118,31 +118,31 @@ def mkTrans (a b c : cvc5.Term) (hab hbc : Expr) : ReconstructM Expr := do
   let hbc : Q($y = $z) := hbc
   return q(Eq.trans $hab $hbc)
 
-/-- `f(l₁ … lₙ) = f(r₁ … rₙ)` from `hs : lᵢ = rᵢ` by rewriting the occurrences of each `lᵢ` in
-    the reconstruction of the left-hand side, for reconstructions that are not applications of a
-    function to the arguments (n-ary `distinct`). -/
+/-- `l = r` for two terms that differ only where one of `eqs` applies, by congruence on their
+    application structure. Rewriting by term instead — abstracting an argument's occurrences and
+    applying `congrArg` — is wrong when one argument occurs inside another, which is common among
+    the arguments of an n-ary `distinct` (`x` and `f x` are both arguments). -/
+partial def transportEq (eqs : Array (Expr × Expr × Expr)) (l r : Expr) : MetaM Expr := do
+  if l == r then return ← Meta.mkEqRefl l
+  if let some (_, _, h) := eqs.find? (fun (a, b, _) => a == l && b == r) then return h
+  match l, r with
+  | .app f x, .app g y =>
+    if f == g then return ← Meta.mkCongrArg f (← transportEq eqs x y)
+    if x == y then return ← Meta.mkCongrFun (← transportEq eqs f g) x
+    Meta.mkCongr (← transportEq eqs f g) (← transportEq eqs x y)
+  | _, _ => throwError "cong: cannot align{indentExpr l}\nwith{indentExpr r}"
+
+/-- `f(l₁ … lₙ) = f(r₁ … rₙ)` from `hs : lᵢ = rᵢ` for reconstructions that are not applications of
+    a function to the arguments (n-ary `distinct`, whose reconstruction is a conjunction of
+    pairwise disequalities): transport the changed arguments through that structure. -/
 def congByRewriting (s : Step) (l r : cvc5.Term) (start : Nat) (hs : Array Expr) : ReconstructM Expr := do
   let le ← reconstructTerm l
   let re ← reconstructTerm r
-  let mut cur := le
-  let mut proof : Option Expr := none
+  let mut eqs := #[]
   for i in [start:l.getNumChildren] do
     if l[i]! == r[i]! then continue
-    let a ← reconstructTerm l[i]!
-    let b ← reconstructTerm r[i]!
-    -- `kabstract`, not `Expr.abstract`: an argument is any term, not only a free variable
-    let body ← Meta.kabstract cur a
-    unless body.hasLooseBVars do
-      throwError "cong: {l[i]!} does not occur in {cur}"
-    let motive := Expr.lam `x (← Meta.inferType a) body .default
-    let step ← Meta.mkCongrArg motive hs[i - start]!
-    proof := some (← match proof with
-      | none => pure step
-      | some h => Meta.mkEqTrans h step)
-    cur := body.instantiate1 b
-  let h ← match proof with
-    | some h => pure h
-    | none => Meta.mkEqRefl le
+    eqs := eqs.push (← reconstructTerm l[i]!, ← reconstructTerm r[i]!, hs[i - start]!)
+  let h ← transportEq eqs le re
   addThm s.concl (← Meta.mkExpectedTypeHint h (← Meta.mkEq le re))
 
 /-- `cong`: align the premises with the argument positions of the two applications (equal

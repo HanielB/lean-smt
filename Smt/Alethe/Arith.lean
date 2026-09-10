@@ -234,10 +234,28 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
   let int := allInt s.lits
   let names := if int then intNames else ratNames
   let polyNorm ← names.norm
-  -- coefficients (missing ones are 1); over the integers, clear denominators
+  -- Coefficients. A literal with none is a `bounded_farkas` bound: it has to be a unit row, and
+  -- its multiplier is the one that cancels its variable against the rows before it, as Carcara's
+  -- `la_generic_partial` infers it. Over the integers the denominators are cleared afterwards.
   let mut coeffs : Array Rat := #[]
+  let mut sofar : LinComb := {}
   for i in [0:s.lits.size] do
-    coeffs := coeffs.push ((s.args[i]? >>= Arg.rat?).getD 1)
+    let l := s.lits[i]!
+    let p := match negatedLiteral l with
+      | some (_, a, b) => (linComb a).add (linComb b).neg
+      | none => {}
+    let c ← match s.args[i]? >>= Arg.rat? with
+      | some c => pure c
+      | none =>
+        match p.coeffs.toList.filter (·.2 != 0) with
+        | [(v, c₁)] =>
+          if c₁ == 0 then throwError "bounded_farkas: the bound {l} has a zero coefficient"
+          pure (-(sofar.coeffs.getD v 0) / c₁)
+        | _ =>
+          -- no coefficient and not a unit row: `la_generic` used to read this as 1
+          pure 1
+    coeffs := coeffs.push c
+    sofar := sofar.add (p.scale (match negatedLiteral l with | some (.eq, _, _) => -c | _ => c.abs))
   if int then
     let l := coeffs.foldl (fun l c => Nat.lcm l c.den) 1
     coeffs := coeffs.map (· * l)
@@ -407,7 +425,9 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
 
 @[alethe_rule_reconstruct] def reconstructArith : RuleReconstructor := fun s => do
   match s.rule with
-  | "la_generic" | "la_tautology" => addThm s.concl (← reconstructLaGeneric s)
+  | "la_generic" | "la_tautology" | "bounded_farkas" =>
+    -- `bounded_farkas` is `la_generic` with the multipliers of the bounds left out
+    addThm s.concl (← reconstructLaGeneric s)
   | "la_rw_eq" =>
     -- (cl (= (= t u) (and (<= t u) (<= u t))))
     let eq := s.lits[0]![0]!

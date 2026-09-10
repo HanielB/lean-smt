@@ -1,0 +1,5 @@
+(assume h1 (>= (- (* 3 x) y) 1))
+(assume h2 (<= x 0))
+(assume h3 (>= y 0))
+(step t1 (cl (not (>= (- (* 3 x) y) 1)) (not (<= x 0)) (not (>= y 0))) :rule bounded_farkas :args (1))
+(step t2 (cl) :rule resolution :premises (t1 h1 h2 h3))
