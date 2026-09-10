@@ -255,6 +255,8 @@ def stepArg (env : Env) : Sexp → M (Arg Nat)
 def anchorArgs (env : Env) (args : List Sexp) : M (Env × Array (Arg Nat)) := do
   let mut env := { env with id := ← freshEnvId, fixedId := ← freshEnvId }
   let mut out := #[]
+  -- the kept variables this very anchor declares, with their nodes
+  let mut declared : Array (String × Nat) := #[]
   for a in args do
     match a with
     | .expr [.atom x, sort] =>
@@ -262,6 +264,7 @@ def anchorArgs (env : Env) (args : List Sexp) : M (Env × Array (Arg Nat)) := do
       let sym ← freshSymbol x
       let v ← mkAtom sym
       env := { env with vars := env.vars.insert x (some v), fixed := env.fixed.insert x (some v) }
+      declared := declared.push (x, v)
       out := out.push (.binder x sort v)
     | .expr [.atom ":=", .atom x, t] | .expr [.atom ":=", .expr [.atom x, _], t] =>
       -- a substitution: `t` under the enclosing substitution, `x` replaced on left-hand sides
@@ -272,8 +275,15 @@ def anchorArgs (env : Env) (args : List Sexp) : M (Env × Array (Arg Nat)) := do
         -- writes every `bind` this way)
         env := { env with vars := env.vars.insert x (some t) }
         continue
-      let sym ← freshSymbol x
-      let v ← mkAtom sym
+      -- veriT chains renamings as `((y S) (z S) (:= x y) (:= y z))`: `y` is one of this
+      -- anchor's kept variables *and* is substituted, and veriT treats both as one variable
+      -- (it states `(= x y)` by `refl` and `(= y x)` by `symm` from it, mixing the two roles).
+      -- So a substituted own kept variable keeps its node; the reconstructor let-binds that node
+      -- to the target inside the block, and the closing step abstracts over it. An enclosing
+      -- anchor's `y` is a different variable and gets a fresh name as any substitution does.
+      let v ← match declared.find? (fun (n, _) => n == x) with
+        | some (_, own) => pure own
+        | none => do mkAtom (← freshSymbol x)
       -- a right-hand side that mentions `x` although nothing encloses it can only mean the
       -- replaced variable; resolve it to the substitution rather than to an unknown symbol
       let fixed := if env.fixed.contains x then env.fixed else env.fixed.insert x (some v)

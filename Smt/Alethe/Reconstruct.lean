@@ -531,25 +531,60 @@ partial def runAnchor (_id : String) (args : Array (Arg cvc5.Term)) (body : Arra
   let e ← concludeStep s e?
   registerPremise { id := close.id, lits := close.cl, concl := s.concl, proof := e }
 where
-  /-- Introduce the anchor's variables one by one, extending `userNames` with their cvc5 symbols. -/
+  /-- Introduce the anchor's variables, extending `userNames` with their cvc5 symbols: first every
+      kept variable `(x S)` as a free binder, then every substitution `(:= x t)` as a `let`.
+
+      The two phases matter for veriT's chained renamings, `((y S) (z S) (:= x y) (:= y z))`: `y`
+      is declared kept and then substituted by a *later* kept variable `z`. Inside the block `y`
+      *is* `z` (veriT states `(= y z)` by `refl`, and Carcara accepts it), so `y` must be a `let`
+      bound to `z` — which can only be built once `z` exists. The let shadows the kept binder for
+      the block; the binder itself stays in `vars`, where the closing `bind` looks the conclusion's
+      quantifier variable up. -/
   withVars {α} [Inhabited α] (args : Array (Arg cvc5.Term)) (i : Nat) (ctx : AnchorCtx)
+      (k : AnchorCtx → AletheM α) : AletheM α := do
+    if i == 0 then
+      -- phase one: the kept variables, in anchor order
+      let binders := args.filterMap fun | .binder x s c => some (x, s, c) | _ => none
+      -- Phase two binds the substitutions as lets. A substitution of one of this block's kept
+      -- variables (`(:= y z)` after `(y S)`) must come first: another substitution's value may
+      -- be that very `y` (`(:= x y)`), and it has to capture the let `y := z`, not the binder,
+      -- or zeta-reducing `x` later yields the binder where `z` is due. The lets of the kept
+      -- variables depend only on binders, so they can always go first, in anchor order.
+      let kept := args.filterMap fun | .binder _ _ c => some c | _ => none
+      let isKept : Arg cvc5.Term → Bool | .assign _ c _ => kept.contains c | _ => false
+      let ordered := args.filter isKept ++ args.filter (fun a => !isKept a)
+      -- a term reconstructed in phase one (a binder's own atom, cached under its symbol) must not
+      -- survive into the block, or the block would keep seeing the binder where a let now stands
+      withBinders binders 0 ctx fun ctx => withScope (fun k => withNewTermCache k) (withAssigns ordered 0 ctx k)
+    else
+      k ctx
+  withBinders {α} [Inhabited α] (bs : Array (String × Sexp × cvc5.Term)) (i : Nat) (ctx : AnchorCtx)
+      (k : AnchorCtx → AletheM α) : AletheM α := do
+    if h : i < bs.size then
+      let (x, _, c) := bs[i]
+      let ty ← reconstructSort c.getSort!
+      Meta.withLocalDeclD (Name.mkSimple c.getSymbol!) ty fun fv =>
+        withScope (fun k => withReader (fun r => { r with userNames := r.userNames.insert c.getSymbol! fv }) (withAssums #[fv] k)) do
+          withBinders bs (i + 1) { ctx with vars := ctx.vars.push (x, c, fv) } k
+    else
+      k ctx
+  /-- Phase two: the substitutions, in anchor order, each a `let x := t`. A substitution of one of
+      the block's own kept variables shadows that binder from here on. -/
+  withAssigns {α} [Inhabited α] (args : Array (Arg cvc5.Term)) (i : Nat) (ctx : AnchorCtx)
       (k : AnchorCtx → AletheM α) : AletheM α := do
     if h : i < args.size then
       match args[i] with
-      | .binder x _ c =>
-        let ty ← reconstructSort c.getSort!
-        Meta.withLocalDeclD (Name.mkSimple x) ty fun fv =>
-          withScope (fun k => withReader (fun r => { r with userNames := r.userNames.insert c.getSymbol! fv }) (withAssums #[fv] k)) do
-            withVars args (i + 1) { ctx with vars := ctx.vars.push (x, c, fv) } k
       | .assign x c t =>
-        -- `x := t`: inside the subproof `x` is definitionally `t`, so `refl` steps relating them and
-        -- the closing step's substitution are justified by unfolding
+        -- `x := t`: inside the subproof `x` is definitionally `t`, so `refl` steps relating them
+        -- and the closing step's substitution are justified by unfolding
         let ty ← reconstructSort c.getSort!
         let te ← reconstructTerm t
-        Meta.withLetDecl (Name.mkSimple x) ty te fun fv =>
+        -- named by its fresh cvc5 symbol, not the user name: an enclosing anchor may bind the
+        -- same user name, and a resolution by local-context name would land on that binder
+        Meta.withLetDecl (Name.mkSimple c.getSymbol!) ty te fun fv =>
           withScope (fun k => withReader (fun r => { r with userNames := r.userNames.insert c.getSymbol! fv }) k) do
-            withVars args (i + 1) { ctx with assigns := ctx.assigns.push (x, c, fv, t, te) } k
-      | _ => withVars args (i + 1) ctx k
+            withAssigns args (i + 1) { ctx with assigns := ctx.assigns.push (x, c, fv, t, te) } k
+      | _ => withAssigns args (i + 1) ctx k
     else
       k ctx
 

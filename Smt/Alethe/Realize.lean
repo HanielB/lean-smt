@@ -74,7 +74,8 @@ def feed (s : String) : M Unit := do
 def parseText (s : String) : M Term := do
   feed s
   modify fun st => { st with parsed := st.parsed + 1 }
-  (← get).parser.nextTerm
+  try (← get).parser.nextTerm
+  catch e => throw (.error s!"{e}\n  while parsing: {s.take 400}")
 
 /-- Run an SMT-LIB command given as text. -/
 def command (s : String) : M Unit := do
@@ -154,14 +155,20 @@ def arg : Arg Nat → M (Arg Term)
 /-- Realize the arguments of an anchor, declaring the variables it introduces. -/
 def anchorArgs (args : Array (Arg Nat)) : M (Array (Arg Term)) := do
   let mut out := #[]
+  let mut declared : Std.HashSet Nat := {}
   for a in args do
     match a with
     | .binder x sort v =>
       let c ← declare v sort.serialize
+      declared := declared.insert v
       out := out.push (.binder x sort c)
     | .assign x v t =>
       let t ← node t
-      let c ← declare v (toString t.getSort!)
+      -- the replaced variable is the anchor's own kept variable when it chains renamings
+      -- (`((y S) (:= x y) (:= y z))`): it has been declared above, and cvc5 rejects a second
+      -- declaration of the same symbol
+      let c ← if declared.contains v then node v else declare v (toString t.getSort!)
+      declared := declared.insert v
       out := out.push (.assign x c t)
     | .term t => out := out.push (.term (← node t))
     | .list ts => out := out.push (.list (← ts.mapM node))

@@ -292,8 +292,15 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
   | "eq_congruent_pred" => addThm s.concl (← reconstructEqCongruent s true)
   | "ac_simp" => addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "refl" | "eq_reflexive" =>
-    let (a, _) ← eqSides s.lits[0]!
-    addThm s.concl (← mkRefl a)
+    let (a, b) ← eqSides s.lits[0]!
+    if a == b then
+      addThm s.concl (← mkRefl a)
+    else
+      -- `(= x t)` under the context's `x := t`: `Eq.refl` closes it by unfolding the `let`, but
+      -- the proof's type must be pinned to the stated `x = t`. Once the closing step of the block
+      -- zeta-reduces the `let`, an unpinned `Eq.refl x` would read `t = t`, and a step that
+      -- used this one as a premise for `x = t` (a `cong`) would no longer typecheck
+      addThm s.concl (← mkEqRefl' a b)
   | "symm" =>
     let pr := s.premise! 0
     if s.lits[0]!.getKind! == .EQUAL then

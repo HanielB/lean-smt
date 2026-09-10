@@ -34,7 +34,16 @@ open Smt.Reconstruct
 
 /-- Replace the let-bound anchor variables of `ctx` by their values in `e`. -/
 def zetaAssigns (ctx : AnchorCtx) (e : Expr) : Expr :=
-  ctx.assigns.foldr (fun (_, _, fv, _, te) e => e.replaceFVar fv te) e
+  -- in anchor order: a later assignment's value may mention an earlier assigned variable, and an
+  -- earlier assignment's value may be a later one's variable (veriT's chained renamings
+  -- `(:= x y) (:= y z)`); applying them innermost-first, once each, would leave the `y` that
+  -- substituting `x` introduced un-reduced. Apply in order and repeat until nothing changes.
+  let step (e : Expr) := ctx.assigns.foldl (fun e (_, _, fv, _, te) => e.replaceFVar fv te) e
+  let rec go (e : Expr) (fuel : Nat) : Expr :=
+    match fuel with
+    | 0 => e
+    | fuel + 1 => let e' := step e; if e' == e then e else go e' fuel
+  go e (ctx.assigns.size + 1)
 
 /-- `(∀ ys, p) = (∀ ys, q)` (or with `∃`) from `h : p = q` over the fvars `ys`. -/
 def congrBinders (exists_ : Bool) (ys : Array Expr) (p q h : Expr) : MetaM (Expr × Expr × Expr) := do
@@ -61,6 +70,9 @@ def bindVars (a : AnchorCtx) (quant : cvc5.Term) : ReconstructM (Array Expr) := 
   let mut ys := #[]
   for i in [0:quant[0]!.getNumChildren] do
     let name := quant[0]![i]!.getSymbol!
+    -- (a kept variable the block also substitutes — veriT's chained renaming — is still bound
+    -- by the conclusion's right-hand quantifier under its own name: the substitution applies to
+    -- the left-hand side of the judgment only, and the close keeps the binder on the right)
     let some v := a.vars.find? (fun (m, _, _) => m == name)
       | throwError "bind: the anchor does not declare {name}, bound by {quant}"
     ys := ys.push v.2.2
@@ -107,14 +119,33 @@ def reconstructBind (s : Step) : ReconstructM Expr := do
   let some last := a.last | throwError "bind: empty subproof"
   let k := s.lits[0]![0]!.getKind!
   if k != .FORALL && k != .EXISTS then throwError "bind: unsupported binder {k}"
+  -- A `bind` whose two sides are the same formula up to the names of bound variables is closed
+  -- by reflexivity: `Expr` equality is α-equivalence, and so is the kernel's. This is every
+  -- `bind` veriT writes with identity substitutions, and every pure renaming, and it is cheaper
+  -- than a `forall_congr` chain. It also sidesteps the subproof, which for a chained renaming
+  -- (`((y S) (z S) (:= x y) (:= y z))`) derives the equality by `symm`/`cong` steps that only
+  -- hold name-syntactically — Carcara checks them as such — and have no single consistent
+  -- reading as terms of the block.
+  if let some (_, le, re) := s.concl.eq? then
+    if le == re then
+      return ← Meta.mkExpectedTypeHint (← Meta.mkEqRefl le) s.concl
   let ys ← bindVars a s.lits[0]![1]!
   let h ← instantiateMVars last.proof
-  let h := zetaAssigns a h
   -- the recorded conclusion, not the proof term's type (a clause lemma may state it as an `orN`)
-  let ty ← Meta.whnfR (zetaAssigns a last.concl)
+  let ty ← Meta.whnfR last.concl
   let some (_, p, q) := ty.eq? | throwError "bind: the subproof does not prove an equality"
+  -- The judgment is `Γ ▷ p ≃ q` with the substitution applying to `p` only: zeta-reduce the
+  -- block's lets in `p` and in the proof, but a kept variable the block also substitutes (veriT's
+  -- chained renaming) stays itself in `q`, where the conclusion's right-hand quantifier binds it.
+  -- Since the let of such a variable *is* that variable's node, zeta must leave `q` alone.
   let p := zetaAssigns a p
-  let q := zetaAssigns a q
+  let h := zetaAssigns a h
+  -- in `q` the let that shadows such a kept variable stands for the variable itself: put the
+  -- binder back where the let is
+  let q := a.assigns.foldl (init := q) fun q (_, c, fv, _, _) =>
+    match a.vars.find? (fun (_, c', _) => c' == c) with
+    | some (_, _, kv) => q.replaceFVar fv kv
+    | none => q
   let (_, _, h) ← congrBinders (k == .EXISTS) ys p q h
   return h
 
