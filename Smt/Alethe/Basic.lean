@@ -73,6 +73,33 @@ def nativeDecideProof (p : Q(Prop)) (hp : Q(Decidable $p)) : MetaM Q($p) := do
 def decideProofOfNative (p : Q(Prop)) (hp : Q(Decidable $p)) : ReconstructM Q($p) := do
   if ← useNative then nativeDecideProof p hp else decideProof p hp
 
+/-- Close a goal that holds for either truth value of each of `atoms`, by splitting on them
+    classically and simplifying with the resulting hypotheses. Used by `bfun_elim`, whose two
+    sides differ only in how a Boolean argument is placed, and by `evaluate` on a term with an
+    opaque Boolean atom, which `decide` cannot run on. -/
+partial def proveByCases (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) : MetaM Unit := do
+  match atoms with
+  | [] =>
+    let mut thms ← Meta.getSimpTheorems
+    for h in hyps do
+      thms ← thms.add (.fvar h.fvarId!) #[] h
+    let ctx ← Meta.Simp.mkContext {} #[thms] (← Meta.getSimpCongrTheorems)
+    let (r, _) ← Meta.simpGoal mv ctx #[← Meta.Simp.getSimprocs]
+    if let some (_, mv') := r then
+      throwError "case split: the two sides differ in a case:{indentExpr (← mv'.getType)}"
+  | b :: rest =>
+    let ty ← mv.getType
+    let em ← Meta.mkAppM ``Classical.em #[b]
+    let pos ← Meta.withLocalDeclD `hb b fun hb => do
+      let m ← Meta.mkFreshExprMVar ty
+      proveByCases m.mvarId! rest (hyps.push hb)
+      Meta.mkLambdaFVars #[hb] (← instantiateMVars m)
+    let neg ← Meta.withLocalDeclD `hnb (mkNot b) fun hnb => do
+      let m ← Meta.mkFreshExprMVar ty
+      proveByCases m.mvarId! rest (hyps.push hnb)
+      Meta.mkLambdaFVars #[hnb] (← instantiateMVars m)
+    mv.assign (← Meta.mkAppM ``Or.elim #[em, pos, neg])
+
 /-- A previously checked step (or an assumption), as seen by later steps. -/
 structure Premise where
   id : String

@@ -129,7 +129,10 @@ def reconstructRewrite (rw : RewriteStep) : ReconstructM (Option Expr) := do
     let l : Q(Prop) ← reconstructTerm lhs
     let r : Q(Prop) ← reconstructTerm rhs
     let xs := lhs[0]!.getChildren
-    let ys := if rhs.getKind! == .FORALL then rhs[0]!.getChildren else #[]
+    -- when every binder is dropped the result is the body itself, which may be a quantifier of
+    -- its own: its binders are not the ones this rewrite kept
+    let ys := if rhs == lhs[1]! then #[]
+              else if rhs.getKind! == .FORALL then rhs[0]!.getChildren else #[]
     let decls (vs : Array cvc5.Term) := vs.map fun v =>
       (getVariableName v, fun (_ : Array Expr) => reconstructSort v.getSort!)
     -- the innermost binder of `v` in `vs`: the one its occurrences in the body refer to

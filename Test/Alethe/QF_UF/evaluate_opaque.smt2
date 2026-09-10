@@ -1,0 +1,7 @@
+(set-logic QF_UFIDL)
+(declare-fun p () Bool)
+(declare-fun q () Bool)
+(declare-fun x () Int)
+(declare-fun y () Int)
+(assert (and (and p false) (and (or p (and q true)) (and (<= 5 3) p))))
+(check-sat)

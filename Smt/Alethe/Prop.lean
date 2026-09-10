@@ -104,31 +104,6 @@ partial def bfunAtoms (e : Expr) (acc : Array Expr) : MetaM (Array Expr) := do
   | .proj _ _ b => bfunAtoms b acc
   | _ => return acc
 
-/-- Close `φ = ψ`, where `ψ` is `φ` with Boolean arguments `b` of applications turned into
-    `ite b (… true …) (… false …)`, by case-splitting on the atoms and simplifying. -/
-partial def bfunElimProve (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) : MetaM Unit := do
-  match atoms with
-  | [] =>
-    let mut thms ← Meta.getSimpTheorems
-    for h in hyps do
-      thms ← thms.add (.fvar h.fvarId!) #[] h
-    let ctx ← Meta.Simp.mkContext {} #[thms] (← Meta.getSimpCongrTheorems)
-    let (r, _) ← Meta.simpGoal mv ctx #[← Meta.Simp.getSimprocs]
-    if let some (_, mv') := r then
-      throwError "bfun_elim: the two sides differ in a case:{indentExpr (← mv'.getType)}"
-  | b :: rest =>
-    let ty ← mv.getType
-    let em ← Meta.mkAppM ``Classical.em #[b]
-    let pos ← Meta.withLocalDeclD `hb b fun hb => do
-      let m ← Meta.mkFreshExprMVar ty
-      bfunElimProve m.mvarId! rest (hyps.push hb)
-      Meta.mkLambdaFVars #[hb] (← instantiateMVars m)
-    let neg ← Meta.withLocalDeclD `hnb (mkNot b) fun hnb => do
-      let m ← Meta.mkFreshExprMVar ty
-      bfunElimProve m.mvarId! rest (hyps.push hnb)
-      Meta.mkLambdaFVars #[hnb] (← instantiateMVars m)
-    mv.assign (← Meta.mkAppM ``Or.elim #[em, pos, neg])
-
 @[alethe_rule_reconstruct] def reconstructProp : RuleReconstructor := fun s => do
   match s.rule with
   | "bfun_elim" =>
@@ -140,7 +115,7 @@ partial def bfunElimProve (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) 
     let psi ← reconstructTerm s.lits[0]!
     let atoms ← bfunAtoms phi #[]
     if atoms.size > 8 then throwError "bfun_elim: {atoms.size} Boolean arguments to split on"
-    let heq ← addTac (← Meta.mkEq phi psi) fun mv => bfunElimProve mv atoms.toList #[]
+    let heq ← addTac (← Meta.mkEq phi psi) fun mv => proveByCases mv atoms.toList #[]
     addThm s.concl (← Meta.mkAppM ``Eq.mp #[heq, pr.proof])
   | "connective_def" | "qnt_duality" => reconstructConnectiveDef s
   | "ite_then_intro" | "ite_else_intro" =>

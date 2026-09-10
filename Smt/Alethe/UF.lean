@@ -41,6 +41,25 @@ namespace Smt.Alethe
 open Lean Qq
 open Smt.Reconstruct
 
+/-- The Boolean atoms of a term that stand in the way of deciding it: the propositional leaves
+    whose own `Decidable` instance is classical, an uninterpreted Boolean symbol being the usual
+    case. The propositional connectives are descended through, everything else is a leaf. -/
+partial def opaqueAtoms (e : Expr) (acc : Array Expr) : ReconstructM (Array Expr) := do
+  match e.getAppFnArgs with
+  | (``And, #[a, b]) | (``Or, #[a, b]) | (``Iff, #[a, b]) => opaqueAtoms b (← opaqueAtoms a acc)
+  | (``Not, #[a]) => opaqueAtoms a acc
+  | (``Eq, #[ty, a, b]) =>
+    if ty.isProp then opaqueAtoms b (← opaqueAtoms a acc) else pure acc
+  | (``ite, #[_, c, _, a, b]) => opaqueAtoms b (← opaqueAtoms a (← opaqueAtoms c acc))
+  | _ =>
+    unless ← Meta.isProp e do return acc
+    if e.isConstOf ``True || e.isConstOf ``False then return acc
+    let computable ← match ← Meta.trySynthInstance (← Meta.mkAppM ``Decidable #[e]) with
+      | .some inst => pure !(inst.getUsedConstants.any (isNoncomputable (← getEnv)))
+      | _ => pure false
+    if computable || acc.contains e then return acc
+    return acc.push e
+
 /-- The sides of an equality term. -/
 def eqSides (t : cvc5.Term) : ReconstructM (cvc5.Term × cvc5.Term) := do
   if t.getKind! != .EQUAL then throwError "expected an equality, got {t}"
@@ -405,7 +424,12 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       return some (← addThm q($t = $t') q(Eq.refl $t))
     let hp : Q(Decidable ($t = $t')) ← Meta.synthDecidableInstance q(($t = $t'))
     if hp.getUsedConstants.any (isNoncomputable (← getEnv)) then
-      return none
+      -- an uninterpreted Boolean symbol in the term makes the instance classical, so `decide`
+      -- cannot run; the equality holds for either truth value of such an atom, so split
+      let atoms ← opaqueAtoms q($t = $t') #[]
+      if atoms.isEmpty then throwError "evaluate: not decidable and no atom to split on"
+      if atoms.size > 8 then throwError "evaluate: {atoms.size} opaque Boolean atoms"
+      return some (← addTac q($t = $t') fun mv => proveByCases mv atoms.toList #[])
     addThm q($t = $t') (← decideProofOfNative q($t = $t') hp)
   | "rare_rewrite" =>
     match s.args[0]? with
