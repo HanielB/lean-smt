@@ -114,7 +114,7 @@ The proof is expected to be elaborated by Carcara with
 ```
 carcara elaborate --expand-let-bindings --allow-int-real-subtyping \
   --rare-file Smt/Alethe/Rare/rewrites.eo \
-  --pipeline polyeq local core-simp-rare --core-rules <the *_simplify rules> \
+  --pipeline polyeq local core-simp-rare budget --core-rules <the *_simplify rules> \
   -- problem.alethe problem.smt2
 ```
 (`polyeq` and `local` make implicit reasoning explicit and give resolution steps

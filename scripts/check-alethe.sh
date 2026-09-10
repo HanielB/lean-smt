@@ -48,7 +48,7 @@ trap 'rm -rf "$tmp"' EXIT
 if $elaborate; then
   carcara_exe="${CARCARA:-carcara}"
   rare_file="$repo_root/Smt/Alethe/Rare/rewrites.eo"
-  pipeline=(polyeq local core-simp-rare)
+  pipeline=(polyeq local core-simp-rare budget)
   core_rules=(ite_simplify eq_simplify not_simplify implies_simplify equiv_simplify bool_simplify
               comp_simplify and_simplify or_simplify prod_simplify sum_simplify minus_simplify
               unary_minus_simplify div_simplify)

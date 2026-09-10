@@ -41,7 +41,7 @@ register_option smt.alethe.rareFile : String := {
 }
 
 register_option smt.alethe.pipeline : String := {
-  defValue := "polyeq local core-simp-rare"
+  defValue := "polyeq local core-simp-rare budget"
   descr := "the Carcara elaboration pipeline of the `alethe` tactic"
 }
 
