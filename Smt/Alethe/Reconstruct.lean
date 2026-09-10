@@ -77,7 +77,8 @@ structure Stats where
   failures : Array (String × String × String) := #[]
   /-- Whether the empty clause was derived. -/
   emptyClause : Bool := false
-  /-- Milliseconds spent in the kernel. -/
+  /-- Milliseconds spent in the kernel, summed over the calls: with `smt.alethe.jobs > 1` they run
+      concurrently and the sum exceeds the time the checker spent waiting for them. -/
   kernelMs : Nat := 0
 deriving Inhabited
 
@@ -298,6 +299,12 @@ partial def drainTo (n : Nat) : AletheM Unit := do
   joinOne
   drainTo n
 
+/-- `IO.lazyPure` for `BaseIO`: an opaque call that evaluates `fn ()` where it stands. A plain
+    `let` is evaluated at its use site instead, which would leave the clock reads around a kernel
+    call measuring nothing. -/
+@[noinline] def lazyPure {α : Type} (fn : Unit → α) : BaseIO α :=
+  pure (fn ())
+
 /-- Send the pending steps to the kernel as a single call (synchronously, or as a task when
     `smt.alethe.jobs` allows more than one call in flight). -/
 def flushBatch : AletheM Unit := do
@@ -319,7 +326,7 @@ def flushBatch : AletheM Unit := do
     drainTo (jobs - 1)
     let task ← (BaseIO.asTask do
       let t₀ ← IO.monoMsNow
-      let r := Kernel.check env lctx e
+      let r ← lazyPure fun _ => Kernel.check env lctx e
       let t₁ ← IO.monoMsNow
       return (r, t₁ - t₀)).toIO
     modifyD fun st => { st with inflight := st.inflight.push { steps, lctx, task } }
