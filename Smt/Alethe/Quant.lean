@@ -159,6 +159,16 @@ partial def guardOf (x t : Expr) (h e : Expr) : MetaM (Option Expr) := do
   if let some (a, b) := e.and? then
     if let some g ← guardOf x t (← Meta.mkAppM ``And.left #[h]) a then return some g
     if let some g ← guardOf x t (← Meta.mkAppM ``And.right #[h]) b then return some g
+  -- `∃ z, b` forces the guard whenever `b` does and `z` is not one of its variables (Carcara's
+  -- `extract_points` descends through binders in the same way)
+  if let some (α, p) := e.app2? ``Exists then
+    let name := match p with | .lam n _ _ _ => n | _ => `z
+    return ← Meta.withLocalDeclD name α fun z => do
+      let b ← Meta.whnfR (mkApp p z)
+      Meta.withLocalDeclD `hz b fun hz => do
+        let some g ← guardOf x t hz b | return none
+        if g.containsFVar z.fvarId! then return none
+        return some (← Meta.mkAppM ``Exists.elim #[h, ← Meta.mkLambdaFVars #[z, hz] g])
   return none
 
 /-- Prove `e` from `hnx : x ≠ t`, where `e` contains the guard `x = t` (in either orientation) as
@@ -193,57 +203,161 @@ partial def refuteGuard (x t hnx : Expr) (e : Expr) : MetaM Expr := do
       return ← Meta.mkAppM ``And.intro #[← refuteGuard x t hnx a, ← refuteGuard x t hnx b]
     throwError "onepoint: no guard in {e}"
 
-/-- `onepoint` on a universal quantifier: `(∀ ys, φ) = (∀ ys \ x, ψ)` where the anchor assigns
-    `x := t` (`t` may mention the binders before `x`), the subproof proves `φ[t/x] = ψ` under it,
-    and `φ` is trivially true when `x ≠ t` because it contains the guard `x = t`. -/
+/-- Peel `n` nested `Exists` binders off `e`, running `k` on the bound variables and the body. -/
+partial def existsTelescope (e : Expr) (n : Nat) (k : Array Expr → Expr → MetaM α) : MetaM α :=
+  go e n #[]
+where
+  go (e : Expr) (n : Nat) (xs : Array Expr) : MetaM α := do
+    if n == 0 then return ← k xs e
+    let some (α, p) := e.app2? ``Exists | throwError "expected {n} more existential binders in {e}"
+    let name := match p with | .lam m _ _ _ => m | _ => `x
+    Meta.withLocalDeclD name α fun x => do go (← Meta.whnfR (mkApp p x)) (n - 1) (xs.push x)
+
+/-- `h : ∃ x̄, φ` and `elim : ∀ x̄, φ → g` give `g`, by nested `Exists.elim`. -/
+partial def existsElimN (h e : Expr) (n : Nat) (elim : Expr) : MetaM Expr :=
+  go h e n #[]
+where
+  go (h e : Expr) (n : Nat) (xs : Array Expr) : MetaM Expr := do
+    if n == 0 then return mkAppN elim (xs.push h)
+    let some (α, p) := e.app2? ``Exists | throwError "expected {n} more existential binders in {e}"
+    let name := match p with | .lam m _ _ _ => m | _ => `x
+    let lam ← Meta.withLocalDeclD name α fun x => do
+      let b ← Meta.whnfR (mkApp p x)
+      Meta.withLocalDeclD `hx b fun hx => do
+        Meta.mkLambdaFVars #[x, hx] (← go hx b (n - 1) (xs.push x))
+    Meta.mkAppM ``Exists.elim #[h, lam]
+
+/-- `⟨w₁, …, wₙ, h⟩ : ∃ x̄, φ` from `h : φ[w̄]`. -/
+partial def existsIntroN (target : Expr) (ws : Array Expr) (h : Expr) : MetaM Expr :=
+  go target 0
+where
+  go (target : Expr) (i : Nat) : MetaM Expr := do
+    if i == ws.size then return h
+    let some (_, p) := target.app2? ``Exists | throwError "expected an existential, got {target}"
+    let inner ← go (← Meta.whnfR (mkApp p ws[i]!)) (i + 1)
+    Meta.mkAppOptM ``Exists.intro #[none, some p, some ws[i]!, some inner]
+
+/-- `φ = φ[x̄ := t̄]` from `hs : xᵢ = tᵢ`, by congruence on the abstraction of the positions the
+    points occupy. -/
+def onepointCongr (body : Expr) (xs hs : Array Expr) : MetaM Expr := do
+  let lam ← Meta.mkLambdaFVars xs body
+  let mut h ← Meta.mkCongrArg lam hs[0]!
+  for i in [1:hs.size] do
+    h ← Meta.mkCongr h hs[i]!
+  return h
+
+/-- The binder index of each assigned variable. `onepoint`'s left binders are the anchor's kept
+    variables and its points together, and its right binders are the kept ones in order. -/
+def onepointIndices (a : AnchorCtx) (quant : cvc5.Term) : ReconstructM (Array Nat) := do
+  let n := quant[0]!.getNumChildren
+  if a.vars.size + a.assigns.size != n then
+    throwError "onepoint: the anchor declares {a.vars.size} variables and {a.assigns.size} \
+      points, the quantifier binds {n}"
+  let mut idx := #[]
+  for (xname, _, _, _, _) in a.assigns do
+    let some k := (List.range n).find? (fun i => quant[0]![i]!.getSymbol! == xname)
+      | throwError "onepoint: the assigned variable {xname} is not bound by {quant}"
+    idx := idx.push k
+  return idx
+
+/-- The arguments the left quantifier takes when the points are supplied: `ts[p]` at the position
+    of the `p`th point, the kept values in order elsewhere. -/
+def onepointArgs (n : Nat) (idx : Array Nat) (kept ts : Array Expr) : Array Expr := Id.run do
+  let mut args := #[]
+  let mut j := 0
+  for i in [0:n] do
+    match idx.findIdx? (· == i) with
+    | some p => args := args.push ts[p]!
+    | none   => args := args.push kept[j]!; j := j + 1
+  return args
+
+/-- `onepoint` on a universal quantifier: `(∀ x̄ ȳ, φ) = (∀ ȳ, ψ)` where the anchor assigns the
+    points `x̄ := t̄` (a `t` may mention the kept binders) and keeps `ȳ`, the subproof proves
+    `φ[t̄/x̄] = ψ` under it, and `φ` is trivially true when a guard `xᵢ = tᵢ` fails. -/
 def reconstructOnepointForall (s : Step) (a : AnchorCtx) (last : Premise) : ReconstructM Expr := do
-  let (xname, _, fv, _, te) := a.assigns[0]!
   let quant := s.lits[0]![0]!
   let n := quant[0]!.getNumChildren
-  let some k := (List.range n).find? (fun i => quant[0]![i]!.getSymbol! == xname)
-    | throwError "onepoint: the assigned variable {xname} is not bound by {quant}"
-  -- the other binders, as the anchor's variables (in order), and the subproof's `φ[t/x] = ψ`
-  let others := a.vars.map (·.2.2)
-  if others.size != n - 1 then
-    throwError "onepoint: the anchor declares {others.size} other variables, the quantifier has {n - 1}"
+  let idx ← onepointIndices a quant
+  let m := idx.size
+  let kept := a.vars.map (·.2.2)
+  let ts := a.assigns.map fun (_, _, _, _, te) => zetaAssigns a te
   let heq := zetaAssigns a (← instantiateMVars last.proof)
   let ty ← Meta.whnfR (zetaAssigns a last.concl)
-  let some (_, _, psi) := ty.eq? | throwError "onepoint: the subproof does not prove an equality"
+  let some (_, _, _) := ty.eq? | throwError "onepoint: the subproof does not prove an equality"
   let l ← reconstructTerm quant
   let r ← reconstructTerm s.lits[0]![1]!
-  -- (→): instantiate the quantifier at the anchor's variables and `t`
+  -- (→): instantiate the quantifier at the anchor's variables and the points
   let mp ← Meta.withLocalDeclD `h l fun h => do
-    let args := (List.range n).toArray.map fun i =>
-      if i < k then others[i]! else if i == k then te else others[i - 1]!
-    let body ← Meta.mkAppM ``Eq.mp #[heq, mkAppN h args]
-    Meta.mkLambdaFVars (#[h] ++ others) body
-  -- (←): for arbitrary binders, either `x = t` and the subproof applies, or the guard is refuted
+    let body := mkAppN h (onepointArgs n idx kept ts)
+    Meta.mkLambdaFVars (#[h] ++ kept) (← Meta.mkAppM ``Eq.mp #[heq, body])
+  -- (←): for arbitrary binders, either every guard holds and the subproof applies, or one of
+  -- them fails and the body is vacuously true
   let mpr ← Meta.withLocalDeclD `h r fun h => do
-    Meta.forallBoundedTelescope l n fun ys body => do
-      let x := ys[k]!
-      let os := ys.eraseIdx! k
-      let subst (e : Expr) := e.replaceFVars others os
-      let t' := subst te
-      let heq' := subst heq
-      let em ← Meta.mkAppM ``Classical.em #[← Meta.mkEq x t']
-      let onEq ← Meta.withLocalDeclD `hx (← Meta.mkEq x t') fun hx => do
-        -- body[x] from body[t'] = φ[t'] ← ψ
-        let lam ← Meta.mkLambdaFVars #[x] body
-        let hpsi := mkAppN h os
-        let hphi ← Meta.mkAppM ``Eq.mpr #[heq', hpsi]                 -- φ[t']
-        let hcongr ← Meta.mkAppM ``congrArg #[lam, hx]                -- lam x = lam t'
-        Meta.mkLambdaFVars #[hx] (← Meta.mkAppM ``Eq.mpr #[hcongr, hphi])
-      let onNe ← Meta.withLocalDeclD `hnx (← Meta.mkAppM ``Ne #[x, t']) fun hnx => do
-        Meta.mkLambdaFVars #[hnx] (← refuteGuard x t' hnx body)
-      Meta.mkLambdaFVars (#[h] ++ ys) (← Meta.mkAppM ``Or.elim #[em, onEq, onNe])
-  let _ := fv
+    Meta.forallBoundedTelescope l n fun xs body => do
+      let os := (List.range n).toArray.filterMap fun i => if idx.contains i then none else some xs[i]!
+      let subst (e : Expr) := e.replaceFVars kept os
+      let ts' := ts.map subst
+      let xps := idx.map (xs[·]!)
+      let rec go (i : Nat) (hs : Array Expr) : MetaM Expr := do
+        if i ≥ m then
+          let hphi ← Meta.mkAppM ``Eq.mpr #[subst heq, mkAppN h os]
+          Meta.mkAppM ``Eq.mpr #[← onepointCongr body xps hs, hphi]
+        else
+          let eq ← Meta.mkEq xps[i]! ts'[i]!
+          let onEq ← Meta.withLocalDeclD `hx eq fun hx => do
+            Meta.mkLambdaFVars #[hx] (← go (i + 1) (hs.push hx))
+          let onNe ← Meta.withLocalDeclD `hnx (← Meta.mkAppM ``Ne #[xps[i]!, ts'[i]!]) fun hnx => do
+            Meta.mkLambdaFVars #[hnx] (← refuteGuard xps[i]! ts'[i]! hnx body)
+          Meta.mkAppM ``Or.elim #[← Meta.mkAppM ``Classical.em #[eq], onEq, onNe]
+      Meta.mkLambdaFVars (#[h] ++ xs) (← go 0 #[])
+  Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]]
+
+/-- `onepoint` on an existential: `(∃ x̄ ȳ, φ) = (∃ ȳ, ψ)` where the anchor assigns the points
+    `x̄ := t̄` and keeps `ȳ`, the subproof proves `φ[t̄/x̄] = ψ` under it, and every guard
+    `xᵢ = tᵢ` follows from `φ`. -/
+def reconstructOnepointExists (s : Step) (a : AnchorCtx) (last : Premise) : ReconstructM Expr := do
+  let quant := s.lits[0]![0]!
+  let n := quant[0]!.getNumChildren
+  let idx ← onepointIndices a quant
+  let m := idx.size
+  let kept := a.vars.map (·.2.2)
+  let ts := a.assigns.map fun (_, _, _, _, te) => zetaAssigns a te
+  let heq := zetaAssigns a (← instantiateMVars last.proof)
+  let l ← reconstructTerm quant
+  let r ← reconstructTerm s.lits[0]![1]!
+  -- (→): take a witness, read the guards off the body, rewrite it and repack over the kept ones
+  let mp ← Meta.withLocalDeclD `h l fun h => do
+    let elim ← existsTelescope l n fun xs body =>
+      Meta.withLocalDeclD `hb body fun hb => do
+        let os := (List.range n).toArray.filterMap fun i => if idx.contains i then none else some xs[i]!
+        let subst (e : Expr) := e.replaceFVars kept os
+        let ts' := ts.map subst
+        let xps := idx.map (xs[·]!)
+        let mut hs := #[]
+        for i in [0:m] do
+          let some g ← guardOf xps[i]! ts'[i]! hb body
+            | throwError "onepoint: no guard for {xps[i]!} = {ts'[i]!} in {body}"
+          hs := hs.push g
+        let hphi ← Meta.mkAppM ``Eq.mp #[← onepointCongr body xps hs, hb]
+        let hpsi ← Meta.mkAppM ``Eq.mp #[subst heq, hphi]
+        Meta.mkLambdaFVars (xs.push hb) (← existsIntroN r os hpsi)
+    Meta.mkLambdaFVars #[h] (← existsElimN h l n elim)
+  -- (←): supply the points as witnesses
+  let mpr ← Meta.withLocalDeclD `h r fun h => do
+    let elim ← existsTelescope r kept.size fun ys psi =>
+      Meta.withLocalDeclD `hp psi fun hp => do
+        let subst (e : Expr) := e.replaceFVars kept ys
+        let hphi ← Meta.mkAppM ``Eq.mpr #[subst heq, hp]
+        Meta.mkLambdaFVars (ys.push hp) (← existsIntroN l (onepointArgs n idx ys (ts.map subst)) hphi)
+    Meta.mkLambdaFVars #[h] (← existsElimN h r kept.size elim)
   Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]]
 
 def reconstructOnepoint (s : Step) : ReconstructM Expr := do
   let some a := s.anchor | throwError "onepoint: outside of an anchor"
   let some last := a.last | throwError "onepoint: empty subproof"
-  if a.assigns.size != 1 then throwError "onepoint: {a.assigns.size} assignments (one variable is supported)"
   if s.lits[0]![0]!.getKind! == .FORALL then return ← reconstructOnepointForall s a last
+  if a.assigns.size != 1 || a.vars.size != 0 then
+    return ← reconstructOnepointExists s a last
   let (_, _, fv, _, te) := a.assigns[0]!
   let quant := s.lits[0]![0]!
   let k := quant.getKind!

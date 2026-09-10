@@ -384,7 +384,11 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation);
     -- other operators (`+`, `*`) and anything the normalizer rejects fall back to AC rewriting.
     let some (_, l, r) := s.concl.eq? | addTac s.concl Meta.AC.rewriteUnnormalizedTop
-    if (Prop.AciNorm.topConnective? l r).isSome then
+    -- a layer that collapses to one atom (veriT's `(and x)`) reconstructs to the same term on
+    -- both sides, and there is no operator left for either normalizer to see
+    if ← Meta.isDefEq l r then
+      addThm s.concl (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl l) s.concl)
+    else if (Prop.AciNorm.topConnective? l r).isSome then
       try
         addThm s.concl (← Prop.AciNorm.proveEq l r)
       catch e =>
