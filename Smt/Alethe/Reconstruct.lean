@@ -196,8 +196,15 @@ def reconstructStep (s : Step) : AletheM (Option Expr) := withTraceNode `smt.ale
   let st ← getD
   let r ← try
       let mut r := none
-      for (rc, _) in st.reconstructors do
-        if let some e ← rc s then
+      let every := smt.alethe.progress.get (← getOptions)
+      for (rc, name) in st.reconstructors do
+        let t₀ ← IO.monoMsNow
+        let e? ← rc s
+        if every > 0 then
+          let dt := (← IO.monoMsNow) - t₀
+          if dt ≥ 200 then
+            progressLine s!"[alethe] slow reconstructor {name} on {s.id} ({s.rule}): {dt} ms"
+        if let some e := e? then
           r := some e
           break
       pure (Except.ok r)

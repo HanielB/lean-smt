@@ -81,12 +81,13 @@ def orient (pr : Premise) (a b : cvc5.Term) : ReconstructM Expr := do
   let h : Q($x = $y) := pr.proof
   if l == b && r == a then
     return q(Eq.symm $h)
-  -- up to the context's substitutions
-  if (← termEq l a) && (← termEq r b) then
+  -- up to the context's substitutions (`<&&>` keeps the second defeq check behind the first;
+  -- `(← …) && (← …)` would run both)
+  if ← termEq l a <&&> termEq r b then
     let a : Q($α) ← reconstructTerm a
     let b : Q($α) ← reconstructTerm b
     return ← Meta.mkExpectedTypeHint h q($a = $b)
-  if (← termEq l b) && (← termEq r a) then
+  if ← termEq l b <&&> termEq r a then
     let a : Q($α) ← reconstructTerm a
     let b : Q($α) ← reconstructTerm b
     return ← Meta.mkExpectedTypeHint q(Eq.symm $h) q($a = $b)
@@ -177,20 +178,23 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
       hs := hs.push (← mkRefl l[i]!)
     else if let some pr := s.premises.find? (matchesEq · l[i]! r[i]!) then
       hs := hs.push (← orient pr l[i]! r[i]!)
-    else if ← termEq l[i]! r[i]! then
-      -- equal up to the context's substitutions
-      hs := hs.push (← mkEqRefl' l[i]! r[i]!)
     else
-      -- a premise equal to the pair up to the substitutions
-      let mut found := none
-      for pr in s.premises do
-        if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
-          let (x, y) ← eqSides pr.lits[0]!
-          if ((← termEq x l[i]!) && (← termEq y r[i]!)) || ((← termEq x r[i]!) && (← termEq y l[i]!)) then
-            found := some pr
-            break
-      let some pr := found | throwError "cong: no premise for {l[i]!} = {r[i]!}"
-      hs := hs.push (← orient pr l[i]! r[i]!)
+      -- the defeq checks stay behind the syntactic ones (an `else if ← …` would hoist them out
+      -- of the conditional and run them for every argument)
+      if ← termEq l[i]! r[i]! then
+        -- equal up to the context's substitutions
+        hs := hs.push (← mkEqRefl' l[i]! r[i]!)
+      else
+        -- a premise equal to the pair up to the substitutions
+        let mut found := none
+        for pr in s.premises do
+          if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
+            let (x, y) ← eqSides pr.lits[0]!
+            if ← (termEq x l[i]! <&&> termEq y r[i]!) <||> (termEq x r[i]! <&&> termEq y l[i]!) then
+              found := some pr
+              break
+        let some pr := found | throwError "cong: no premise for {l[i]!} = {r[i]!}"
+        hs := hs.push (← orient pr l[i]! r[i]!)
   if k == .DISTINCT then
     -- `distinct` reconstructs to a conjunction of disequalities, not an application: rewrite the
     -- arguments one at a time
@@ -329,15 +333,22 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     for pr in s.premises do
       let (l, r) ← eqSides pr.lits[0]!
       if l == r then continue
-      let next ← if l == curr then pure r else if r == curr then pure l
-        else if ← termEq l curr then pure r else if ← termEq r curr then pure l else
-        throwError "trans: premise {pr.lits[0]!} does not continue from {curr}"
+      -- (`(← …)` in a condition is hoisted out of the `if`: the defeq checks must stay behind
+      -- the syntactic ones, or every link costs an `isDefEq` on the whole terms)
+      let next ←
+        if l == curr then pure r
+        else if r == curr then pure l
+        else do
+          if ← termEq l curr then pure r
+          else if ← termEq r curr then pure l
+          else throwError "trans: premise {pr.lits[0]!} does not continue from {curr}"
       let hstep ← orient pr curr next
       h := some (← match h with
         | none => pure hstep
         | some h₀ => mkTrans a curr next h₀ hstep)
       curr := next
-    if curr != b && !(← termEq curr b) then throwError "trans: chain ends at {curr}, expected {b}"
+    if curr != b then
+      unless ← termEq curr b do throwError "trans: chain ends at {curr}, expected {b}"
     let some hab := h | throwError "trans without premises"
     addThm s.concl hab
   | "cong" => reconstructCong s

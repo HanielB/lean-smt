@@ -315,7 +315,10 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
         let some (_, a, b) := negatedLiteral l | unreachable!
         let p := (linComb a).add (linComb b).neg  -- a - b (⋈ 0)
         let g := strengthenGain p (r == .lt)
-        if g > 0 then
+        -- a strict bound's gain of one is just `a < b ⟹ a + 1 ≤ b`, a lemma application rather
+        -- than an omega call (the common case, with unit coefficients); a non-strict bound can
+        -- gain one too, by rounding, and that needs the gcd argument
+        if g > 1 || (g == 1 && r != .lt) then
           -- b - a = Σ (-cᵢ)·xᵢ + (-k): the shape omega needs to round the bound
           let mut lterm : Expr := numeral names (-p.const)
           for (t, c) in p.coeffs.toList do
@@ -343,7 +346,8 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
           h ← instantiateMVars hg
           bd ← boundOf h
         else if r == .lt then
-          -- a strict bound with no gain (a non-integer coefficient): `a < b` is `a + 1 ≤ b`
+          -- a strict bound: `a < b` is `a + 1 ≤ b` (also when there is no gcd gain, e.g. with a
+          -- non-integer coefficient)
           h ← Meta.mkAppM ``Iff.mpr #[← Meta.mkAppOptM ``Int.add_one_le_iff #[bd.a, bd.b], h]
           bd ← boundOf h
       -- scale
