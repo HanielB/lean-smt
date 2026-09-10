@@ -85,7 +85,10 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
     (term := false) : MetaM CheckResult := do
   let _ := lax
   -- a proof is one command with thousands of steps: no heartbeat budget
-  withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := 0, maxRecDepth := 100000 }) do
+  -- the depth is raised through the options, not the context alone: `native` compiles its
+  -- certificates, and the compiler reads the limit from there
+  withOptions (maxRecDepth.set · 100000) do
+  withTheReader Core.Context (fun ctx => { ctx with maxHeartbeats := 0 }) do
   let (r, timings) ← (do
     let parsed ← timed "parse" do
       let problemText ← IO.FS.readFile problemPath
@@ -144,7 +147,8 @@ def checkAlethe (problemPath proofPath : System.FilePath) (native := false) (lax
     tactic). Returns the result and the goals of the trusted steps. -/
 def reconstructAletheText (problemText proofText : String) (ctx : Reconstruct.Context) :
     MetaM (ProofResult × List MVarId) := do
-  withTheReader Core.Context (fun c => { c with maxHeartbeats := 0, maxRecDepth := 100000 }) do
+  withOptions (maxRecDepth.set · 100000) do
+  withTheReader Core.Context (fun c => { c with maxHeartbeats := 0 }) do
   let problemCmds ← parseSexps "problem" problemText
   let proofSexps ← parseSexps "proof" proofText
   let parsed ← match Parser.parse problemCmds proofSexps with

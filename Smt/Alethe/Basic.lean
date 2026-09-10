@@ -7,6 +7,8 @@ Authors: Haniel Barbosa
 
 module
 
+public import Lean.Meta.Native
+public meta import Lean.Meta.Native
 public import Smt.Reconstruct
 public meta import Smt.Reconstruct
 public import Smt.Alethe.Realize
@@ -56,6 +58,20 @@ partial def alignInstances (a b : Expr) : MetaM (Option Expr) := do
     Lean captures `IO.eprintln` into the message log, which only appears when the command ends. -/
 def progressLine (s : String) : IO Unit :=
   IO.FS.withFile "/dev/stderr" .append fun h => h.putStrLn s
+
+/-- A proof of a decidable proposition by `decide`. -/
+def decideProof (p : Q(Prop)) (hp : Q(Decidable $p)) : MetaM Q($p) :=
+  return .app q(@of_decide_eq_true $p $hp) q(Eq.refl true)
+
+/-- A proof of a decidable proposition by native evaluation. -/
+def nativeDecideProof (p : Q(Prop)) (hp : Q(Decidable $p)) : MetaM Q($p) := do
+  match ← Meta.nativeEqTrue `Smt.eval q(decide $p) with
+  | .notTrue => throwError "evaluated that the proposition {indentExpr q(decide $p)} is false"
+  | .success hdp => return .app q(@of_decide_eq_true $p $hp) hdp
+
+/-- A proof of a decidable proposition: by native evaluation under `native`, else by the kernel. -/
+def decideProofOfNative (p : Q(Prop)) (hp : Q(Decidable $p)) : ReconstructM Q($p) := do
+  if ← useNative then nativeDecideProof p hp else decideProof p hp
 
 /-- A previously checked step (or an assumption), as seen by later steps. -/
 structure Premise where

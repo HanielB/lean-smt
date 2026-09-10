@@ -112,6 +112,14 @@ their pivots; the `core-simp-rare` pass turns the `*_simplify` rules into chains
 `rare_rewrite` steps). For veriT proofs, add the legacy rules `qnt_cnf ite_intro
 bfun_elim ac_simp` to `--core-rules`.
 
+Checking a large proof is dominated by the kernel replaying the certificates of
+the arithmetic steps: `poly_simp` and `la_generic` normalize polynomials, and by
+default the kernel evaluates that normalization by reduction. Two options trade
+this cost off. `native` runs those normalizations — and the `evaluate` and
+`absorb` steps — as compiled code instead, which is several times faster but
+puts the Lean compiler in the trusted base. `smt.alethe.jobs` runs that many
+kernel calls concurrently, with `smt.alethe.batch` steps to a call.
+
 The `alethe` tactic runs this pipeline on a goal: it translates the goal like
 `smt`, asks cvc5 for an Alethe proof, elaborates it with Carcara (an external
 process, found through the option `smt.alethe.carcara`, the environment

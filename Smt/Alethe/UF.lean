@@ -41,16 +41,6 @@ namespace Smt.Alethe
 open Lean Qq
 open Smt.Reconstruct
 
-/-- A proof of a decidable proposition by `decide`. -/
-def decideProof (p : Q(Prop)) (hp : Q(Decidable $p)) : MetaM Q($p) :=
-  return .app q(@of_decide_eq_true $p $hp) q(Eq.refl true)
-
-/-- A proof of a decidable proposition by native evaluation. -/
-def nativeDecideProof (p : Q(Prop)) (hp : Q(Decidable $p)) : MetaM Q($p) := do
-  match ← Meta.nativeEqTrue `Smt.eval q(decide $p) with
-  | .notTrue => throwError "evaluated that the proposition {indentExpr q(decide $p)} is false"
-  | .success hdp => return .app q(@of_decide_eq_true $p $hp) hdp
-
 /-- The sides of an equality term. -/
 def eqSides (t : cvc5.Term) : ReconstructM (cvc5.Term × cvc5.Term) := do
   if t.getKind! != .EQUAL then throwError "expected an equality, got {t}"
@@ -412,10 +402,7 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let hp : Q(Decidable ($t = $t')) ← Meta.synthDecidableInstance q(($t = $t'))
     if hp.getUsedConstants.any (isNoncomputable (← getEnv)) then
       return none
-    if ← useNative then
-      addThm q($t = $t') (← nativeDecideProof q($t = $t') hp)
-    else
-      addThm q($t = $t') (← decideProof q($t = $t') hp)
+    addThm q($t = $t') (← decideProofOfNative q($t = $t') hp)
   | "rare_rewrite" =>
     match s.args[0]? with
     | some (.str "distinct-false") => reconstructDistinctFalse s

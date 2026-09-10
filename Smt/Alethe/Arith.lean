@@ -169,6 +169,8 @@ structure ArithNames where
   sumUb : Rel → Rel → Name
   farkas : Rel → Name
   polyNorm : MVarId → MetaM Unit
+  /-- `polyNorm` with the normalizer run by compiled code instead of the kernel. -/
+  nativePolyNorm : MVarId → MetaM Unit
 
 def intNames : ArithNames :=
   { int := true, notLt := ``Int.not_lt, notLe := ``Int.not_le,
@@ -176,7 +178,7 @@ def intNames : ArithNames :=
     mulNegEq := ``Int.mul_neg_eq,
     sumUb := sumUbName `Smt.Reconstruct.Int,
     farkas := fun | .lt => ``Int.farkas_lt | .le => ``Int.farkas_le | .eq => ``Int.farkas_eq,
-    polyNorm := Int.polyNorm }
+    polyNorm := Int.polyNorm, nativePolyNorm := Int.nativePolyNorm }
 where
   sumUbName (ns : Name) : Rel → Rel → Name
     | .lt, .lt => ns ++ `sum_ub₁ | .lt, .le => ns ++ `sum_ub₂ | .lt, .eq => ns ++ `sum_ub₃
@@ -189,7 +191,11 @@ def ratNames : ArithNames :=
     mulNegEq := ``Rat.mul_neg_eq,
     sumUb := intNames.sumUbName `Smt.Reconstruct.Rat,
     farkas := fun | .lt => ``Rat.farkas_lt | .le => ``Rat.farkas_le | .eq => ``Rat.farkas_eq,
-    polyNorm := Rat.polyNorm }
+    polyNorm := Rat.polyNorm, nativePolyNorm := Rat.nativePolyNorm }
+
+/-- The polynomial normalizer to use: the native one under `native`, else the kernel-checked one. -/
+def ArithNames.norm (names : ArithNames) : ReconstructM (MVarId → MetaM Unit) :=
+  return if ← useNative then names.nativePolyNorm else names.polyNorm
 
 def relJoin : Rel → Rel → Rel
   | .lt, _ | _, .lt => .lt
@@ -200,10 +206,10 @@ def relJoin : Rel → Rel → Rel
 def numeral (names : ArithNames) (c : Rat) : Expr :=
   if names.int then toExpr c.num else toExpr c
 
-/-- A proof of a decidable fact by kernel evaluation. -/
-def decideProof' (p : Expr) : MetaM Expr := do
+/-- A proof of a decidable fact, by native evaluation under `native` and by the kernel otherwise. -/
+def decideProof' (p : Expr) : ReconstructM Expr := do
   let inst ← Meta.synthInstance (mkApp (mkConst ``Decidable) p)
-  return mkApp3 (mkConst ``of_decide_eq_true) p inst (mkApp2 (mkConst ``Eq.refl [.succ .zero]) (mkConst ``Bool) (mkConst ``Bool.true))
+  decideProofOfNative p inst
 
 /-- An argument of a real-sorted operation: integer-sorted terms are cast (cvc5's Alethe proofs mix
     integer and real terms). -/
@@ -227,6 +233,7 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
   if (s.lits.findSome? negatedLiteral).isNone then throwError "la_generic: no arithmetic literal"
   let int := allInt s.lits
   let names := if int then intNames else ratNames
+  let polyNorm ← names.norm
   -- coefficients (missing ones are 1); over the integers, clear denominators
   let mut coeffs : Array Rat := #[]
   for i in [0:s.lits.size] do
@@ -328,7 +335,7 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
           let ge := numeral names g
           let eqGoal ← Meta.mkAppM ``Eq #[← Meta.mkAppM ``HSub.hSub #[bd.b, bd.a], lterm]
           let heq ← Meta.mkFreshExprMVar eqGoal
-          names.polyNorm heq.mvarId!
+          polyNorm heq.mvarId!
           let goal ← Meta.mkAppM ``LE.le #[← Meta.mkAppM ``HAdd.hAdd #[bd.a, ge], bd.b]
           let hg ← Meta.mkFreshExprMVar goal
           let before ← getLCtx
@@ -368,7 +375,7 @@ def reconstructLaGeneric (s : Step) : ReconstructM Expr := do
     let ke := numeral names k
     let eqGoal ← Meta.mkAppM ``Eq #[← Meta.mkAppM ``HSub.hSub #[sum.a, sum.b], ke]
     let hk ← Meta.mkFreshExprMVar eqGoal
-    names.polyNorm hk.mvarId!
+    polyNorm hk.mvarId!
     let signGoal ← match sum.rel with
       | .lt => Meta.mkAppM ``LE.le #[numeral names 0, ke]
       | .le => Meta.mkAppM ``LT.lt #[numeral names 0, ke]
@@ -477,7 +484,7 @@ def reconstructLaMult (s : Step) (pos : Bool) : ReconstructM Expr := do
   | "poly_simp" =>
     let t := s.lits[0]!
     if t.getKind! != .EQUAL then throwError "poly_simp: expected an equality"
-    let tac := if t[0]!.getSort!.isInteger then Int.polyNorm else Rat.polyNorm
+    let tac ← (if t[0]!.getSort!.isInteger then intNames else ratNames).norm
     addTac s.concl tac
   | "poly_simp_rel" =>
     let pr := s.premise! 0
