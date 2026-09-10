@@ -87,6 +87,19 @@ import Smt
 #check_alethe "problem.smt2" "problem.alethe"
 -- valid: checked 481 steps, trusted 0, holes 0
 ```
+To check a proof from the command line, use `scripts/check-alethe.sh`:
+```
+scripts/check-alethe.sh problem.smt2 problem.alethe
+-- valid: checked 481 steps, trusted 0, holes 0
+```
+It accepts the same trailing options as `#check_alethe` (`native`, `lax`,
+`term`, `timings`) and requires `lake build` to have been run once beforehand.
+`problem.alethe` is expected to already be elaborated by Carcara (see below);
+to check a raw solver proof directly, pass `--elaborate` and the script runs
+it through Carcara first:
+```
+scripts/check-alethe.sh --elaborate problem.smt2 problem.alethe
+```
 The proof is expected to be elaborated by Carcara with
 ```
 carcara elaborate --expand-let-bindings --allow-int-real-subtyping \
