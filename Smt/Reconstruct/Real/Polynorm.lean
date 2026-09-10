@@ -135,21 +135,27 @@ namespace Polynomial
 def neg (p : Polynomial) : Polynomial :=
   p.map Monomial.neg
 
+/-- Merge `m` into the sorted polynomial it is given, and hand what is left of that polynomial to
+    `k`, which merges the monomials that come after `m`. -/
+def addAux (m : Monomial) (k : Polynomial → Polynomial) : Polynomial → Polynomial
+  | [] => m :: k []
+  | n :: ns =>
+    if m.vars < n.vars then
+      m :: k (n :: ns)
+    else if h : m.vars = n.vars then
+      let m' := m.add n h
+      if m'.coeff = 0 then k ns else m' :: k ns
+    else
+      n :: addAux m k ns
+
 -- NOTE: implementation merges monomials with same variables.
 -- Invariant: monomials remain sorted.
-def add (p q : Polynomial) : Polynomial :=
-  p.foldr insert q
-where
-  insert (m : Monomial) : Polynomial → Polynomial
-    | [] => [m]
-    | n :: ns =>
-      if m.vars < n.vars then
-        m :: n :: ns
-      else if h : m.vars = n.vars then
-        let m' := m.add n h
-        if m'.coeff = 0 then ns else m' :: ns
-      else
-        n :: insert m ns
+-- The two polynomials are merged in a single pass. Inserting the monomials of one into the other
+-- one at a time, as this used to do, makes a sum of `n` terms cost `O(n³)` steps of the *kernel*,
+-- which is what evaluates this.
+def add : Polynomial → Polynomial → Polynomial
+  | [] => fun q => q
+  | m :: ms => addAux m (add ms)
 
 def sub (p q : Polynomial) : Polynomial :=
   p.add q.neg
@@ -168,21 +174,14 @@ def divConst (p : Polynomial) (c : Rat) : Polynomial :=
 def denote (ctx : Context) (p : Polynomial) : Real :=
   p.foldl (fun acc m => acc + m.denote ctx) 0
 
-theorem foldl_add_insert (ctx : Context) :
-  List.foldl (fun z a => z + (Monomial.denote ctx a)) 0 (add.insert m p) =
-  (Monomial.denote ctx m) + List.foldl (fun z a => z + (Monomial.denote ctx a)) 0 p := by
-  induction p with
-  | nil => simp [add.insert]
-  | cons n p ih =>
-    simp only [add.insert]
-    split <;> rename_i hlt <;> simp only [List.foldl_cons, Monomial.foldl_assoc add_assoc, zero_add]
-    · split <;> rename_i heq
-      · split <;> rename_i hneq
-        · rw [←add_zero (Monomial.denote ctx n), Monomial.foldl_assoc add_assoc, ←add_assoc, ←Monomial.denote_add heq]
-          simp [Monomial.denote, hneq]
-        · simp [Monomial.foldl_assoc add_assoc, Monomial.denote_add]
-      · rw [←zero_add (Monomial.denote ctx n), List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc, Monomial.foldl_assoc add_assoc, ih]
-        rw [←add_assoc, add_comm (Monomial.denote ctx n), add_assoc]
+theorem denote_nil : denote ctx ([] : Polynomial) = 0 := rfl
+
+theorem denote_cons {p : List Monomial} {ctx : Context} : denote ctx (m :: p) = m.denote ctx + denote ctx p := by
+  rw [denote, List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc]
+  simp [denote]
+
+theorem denote_singleton {m : Monomial} : denote ctx [m] = m.denote ctx := by
+  simp [denote_cons, denote_nil]
 
 theorem denote_neg {p : Polynomial} : p.neg.denote ctx = -p.denote ctx := by
   simp only [denote, neg]
@@ -192,60 +191,62 @@ theorem denote_neg {p : Polynomial} : p.neg.denote ctx = -p.denote ctx := by
     rw [List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc, neg_add, ←ih, List.map]
     rw [List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc, Monomial.denote_neg]
 
+theorem denote_addAux {ctx : Context} {m : Monomial} {ms : Polynomial}
+    (ih : ∀ r, denote ctx (add ms r) = denote ctx ms + denote ctx r) (q : Polynomial) :
+    denote ctx (addAux m (add ms) q) = m.denote ctx + denote ctx ms + denote ctx q := by
+  induction q with
+  | nil => simp only [addAux, denote_cons, denote_nil, ih, add_zero]
+  | cons n ns ihq =>
+    simp only [addAux]
+    split
+    · simp only [denote_cons, ih, add_assoc]
+    · split
+      · rename_i h
+        have hmn := Monomial.denote_add (ctx := ctx) h
+        split
+        · rename_i hz
+          have : Monomial.denote ctx (m.add n h) = 0 := by
+            simp only [Monomial.denote, hz, Rat.cast_zero, zero_mul]
+          rw [this] at hmn
+          simp only [denote_cons, ih]
+          rw [show m.denote ctx + denote ctx ms + (n.denote ctx + denote ctx ns)
+                = (m.denote ctx + n.denote ctx) + (denote ctx ms + denote ctx ns) by
+                simp only [add_assoc, add_left_comm],
+              ← hmn, zero_add]
+        · simp only [denote_cons, ih, hmn]
+          simp only [add_assoc, add_left_comm]
+      · simp only [denote_cons, ihq]
+        simp only [add_assoc, add_left_comm]
+
 theorem denote_add {p q : Polynomial} : (p.add q).denote ctx = p.denote ctx + q.denote ctx := by
-  simp only [denote, add]
-  induction p with
-  | nil => simp
-  | cons x ys ih =>
-    rw [List.foldr_cons, List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc, add_assoc]
-    rw [← ih, foldl_add_insert]
+  induction p generalizing q with
+  | nil => simp [add, denote_nil]
+  | cons m ms ih =>
+    rw [show add (m :: ms) q = addAux m (add ms) q from rfl, denote_addAux (fun r => ih), denote_cons]
 
 theorem denote_sub {p q : Polynomial} : (p.sub q).denote ctx = p.denote ctx - q.denote ctx := by
   simp only [sub, denote_neg, denote_add, sub_eq_add_neg]
 
 theorem denote_mulMonomial {p : Polynomial} : (p.mulMonomial m).denote ctx = m.denote ctx * p.denote ctx := by
-  simp only [denote, mulMonomial, add]
   induction p with
-  | nil => simp
+  | nil => simp [mulMonomial, denote_nil]
   | cons n p ih =>
-    rw [List.foldl_cons, List.foldr_cons, add_comm 0, Monomial.foldl_assoc add_assoc, mul_add, ←ih]
-    simp [foldl_add_insert, Monomial.denote_mul]
+    simp only [mulMonomial, List.foldr_cons] at *
+    rw [denote_add, ih, denote_singleton, Monomial.denote_mul, denote_cons, mul_add]
 
-theorem denote_cons {p : List Monomial} {ctx : Context} : denote ctx (m :: p) = m.denote ctx + denote ctx p := by
-  rw [denote, List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc]
-  simp [denote]
-
-theorem denote_nil_add : denote ctx (p.add []) = denote ctx p := by
+theorem denote_foldl_mul {q : Polynomial} : ∀ (p acc : Polynomial),
+    denote ctx (p.foldl (fun acc m => (q.mulMonomial m).add acc) acc)
+      = denote ctx acc + denote ctx p * denote ctx q := by
+  intro p
   induction p with
-  | nil => simp [add]
-  | cons n p ih =>
-    simp [denote_add, denote_cons, show denote ctx [] = 0 by rfl, add_zero]
+  | nil => intro acc; simp [denote_nil]
+  | cons m ms ih =>
+    intro acc
+    simp only [List.foldl_cons, ih, denote_add, denote_mulMonomial, denote_cons, add_mul]
+    simp only [add_assoc, add_left_comm]
 
-theorem denote_add_insert {g : Monomial → Polynomial} :
-  denote ctx (List.foldl (fun acc m => (g m).add acc) n p) = denote ctx n + denote ctx (List.foldl (fun acc m => (g m).add acc) [] p) := by
-  revert n
-  induction p with
-  | nil => simp [denote, add_zero]
-  | cons k p ih =>
-    intro n
-    simp only [List.foldl_cons]
-    rw [ih, @ih ((g k).add []), ← add_assoc, denote_nil_add, denote_add, add_comm _ (denote ctx n)]
-
-theorem denote_foldl {g : Monomial → Polynomial} :
-  denote ctx (List.foldl (fun acc m => ((g m).add (acc))) [] p) = List.foldl (fun acc m => (g m).denote ctx + acc) 0 p := by
-  induction p with
-  | nil => simp [denote]
-  | cons n p ih =>
-    simp only [List.foldl_cons, add_comm] at *
-    rw [add_comm 0, Monomial.foldl_assoc add_assoc, ←ih, denote_add_insert, denote_nil_add]
-
-theorem denote_mul {p q : Polynomial} : (p.mul q).denote ctx = p.denote ctx * q.denote ctx :=by
-  simp only [mul]
-  induction p with
-  | nil => simp [denote]
-  | cons n p ih =>
-    simp only [List.foldl_cons, denote_cons, add_mul, ← ih]
-    rw [denote_foldl, denote_add_insert, ←denote_mulMonomial, denote_nil_add, denote_foldl]
+theorem denote_mul {p q : Polynomial} : (p.mul q).denote ctx = p.denote ctx * q.denote ctx := by
+  simp only [mul, denote_foldl_mul, denote_nil, zero_add]
 
 theorem denote_divConst {p : Polynomial} : (p.divConst c).denote ctx = p.denote ctx / c := by
   simp only [denote, divConst]
@@ -255,6 +256,84 @@ theorem denote_divConst {p : Polynomial} : (p.divConst c).denote ctx = p.denote 
     rw [List.map_cons, List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc]
     rw [List.foldl_cons, add_comm 0, Monomial.foldl_assoc add_assoc]
     rw [Monomial.denote_divConst, ih, add_div]
+
+/-- The sum of a list of polynomials. -/
+def denoteAll (ctx : Context) (ps : List Polynomial) : Real :=
+  ps.foldr (fun p acc => denote ctx p + acc) 0
+
+theorem denoteAll_nil : denoteAll ctx [] = 0 := rfl
+
+theorem denoteAll_cons {p : Polynomial} {ps : List Polynomial} :
+    denoteAll ctx (p :: ps) = denote ctx p + denoteAll ctx ps := rfl
+
+/-- One pass of a bottom-up merge sort: merge the sorted polynomials pairwise. -/
+def mergePairs : List Polynomial → List Polynomial
+  | p :: q :: ps => add p q :: mergePairs ps
+  | ps => ps
+
+/-- Merge sorted polynomials into one. `n` bounds the number of passes; `ps.length` is always
+    enough, and the result denotes their sum whatever `n` is. -/
+def mergeAll : Nat → List Polynomial → Polynomial
+  | _, [] => []
+  | _, [p] => p
+  | 0, ps => ps.foldr add []
+  | n + 1, ps => mergeAll n (mergePairs ps)
+
+theorem denote_mergePairs {ps : List Polynomial} :
+    denoteAll ctx (mergePairs ps) = denoteAll ctx ps := by
+  induction ps using mergePairs.induct with
+  | case1 p q ps ih =>
+    simp only [mergePairs, denoteAll_cons, denote_add, ih, add_assoc]
+  | case2 ps h =>
+    cases ps with
+    | nil => rfl
+    | cons p ps =>
+      cases ps with
+      | nil => rfl
+      | cons q ps => exact (h p q ps rfl).elim
+
+theorem denote_foldr_add {ps : List Polynomial} :
+    denote ctx (ps.foldr add []) = denoteAll ctx ps := by
+  induction ps with
+  | nil => rfl
+  | cons p ps ih => simp only [List.foldr_cons, denote_add, ih, denoteAll_cons]
+
+theorem denote_mergeAll {n : Nat} {ps : List Polynomial} :
+    denote ctx (mergeAll n ps) = denoteAll ctx ps := by
+  induction n generalizing ps with
+  | zero =>
+    match ps with
+    | [] => rfl
+    | [p] => simp [mergeAll, denoteAll_cons, denoteAll_nil]
+    | p :: q :: ps => simp only [mergeAll, denote_foldr_add]
+  | succ n ih =>
+    match ps with
+    | [] => rfl
+    | [p] => simp [mergeAll, denoteAll_cons, denoteAll_nil]
+    | p :: q :: ps => simp only [mergeAll, ih, denote_mergePairs]
+
+/-- The singletons a flat list of monomials sorts from. -/
+def singletons (l : Polynomial) : List Polynomial :=
+  l.map fun m => if m.coeff = 0 then [] else [m]
+
+theorem denoteAll_singletons {l : Polynomial} : denoteAll ctx (singletons l) = denote ctx l := by
+  induction l with
+  | nil => rfl
+  | cons m l ih =>
+    simp only [singletons, List.map_cons, denoteAll_cons, denote_cons] at *
+    rw [ih]
+    split
+    · rename_i hz
+      have : Monomial.denote ctx m = 0 := by simp only [Monomial.denote, hz, Rat.cast_zero, zero_mul]
+      simp [denote_nil, this]
+    · simp [denote_singleton]
+
+/-- Sort and merge a flat list of monomials into a polynomial. -/
+def normalize (l : Polynomial) : Polynomial :=
+  mergeAll l.length (singletons l)
+
+theorem denote_normalize {l : Polynomial} : denote ctx (normalize l) = denote ctx l := by
+  simp only [normalize, denote_mergeAll, denoteAll_singletons]
 
 end Polynomial
 
@@ -269,14 +348,6 @@ deriving Inhabited, Repr
 
 namespace IntExpr
 
-def toPolynomial : IntExpr → Polynomial
-  | .val v => if v = 0 then [] else [{ coeff := v, vars := [] }]
-  | .var v => [{ coeff := 1, vars := [⟨false, v⟩] }]
-  | .neg a => a.toPolynomial.neg
-  | .add a b => Polynomial.add a.toPolynomial b.toPolynomial
-  | .sub a b => Polynomial.sub a.toPolynomial b.toPolynomial
-  | .mul a b => Polynomial.mul a.toPolynomial b.toPolynomial
-
 def denote (ctx : IntContext) : IntExpr → Int
   | .val v => v
   | .var v => ctx v
@@ -285,23 +356,69 @@ def denote (ctx : IntContext) : IntExpr → Int
   | .sub a b => a.denote ctx - b.denote ctx
   | .mul a b => a.denote ctx * b.denote ctx
 
-theorem denote_toPolynomial {rctx : RealContext} {e : IntExpr} : e.denote ictx = e.toPolynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) := by
-  induction e with
+/-- Every product of a monomial of `p` with one of `q`, prepended to `acc`. -/
+def appendMul (p q : Polynomial) (acc : Polynomial) : Polynomial :=
+  p.foldr (fun m acc => q.foldr (fun n acc => m.mul n :: acc) acc) acc
+
+/-- The monomials of `k` times an expression, in the order they occur and without merging,
+    prepended to `acc`. Collecting them in one pass and sorting once is what keeps the normal form
+    cheap for the kernel to compute: folding a sum of `n` terms through a sorted insertion, as
+    this used to do, copies the partial polynomial `n` times. -/
+def flatten (k : Rat) : IntExpr → Polynomial → Polynomial
+  | .val v, acc =>
+    let c := k * v
+    if c = 0 then acc else { coeff := c, vars := [] } :: acc
+  | .var v, acc => { coeff := k, vars := [⟨false, v⟩] } :: acc
+  | .neg a, acc => flatten (-k) a acc
+  | .add a b, acc => flatten k a (flatten k b acc)
+  | .sub a b, acc => flatten k a (flatten (-k) b acc)
+  | .mul a b, acc => appendMul (flatten k a []) (flatten 1 b []) acc
+
+theorem denote_foldr_mulCons {m : Monomial} {q acc : Polynomial} :
+    Polynomial.denote ctx (q.foldr (fun n acc => m.mul n :: acc) acc)
+      = m.denote ctx * Polynomial.denote ctx q + Polynomial.denote ctx acc := by
+  induction q with
+  | nil => simp [Polynomial.denote_nil]
+  | cons n q ihq =>
+    simp only [List.foldr_cons, Polynomial.denote_cons, ihq, Monomial.denote_mul, mul_add,
+      add_assoc]
+
+theorem appendMul_cons {m : Monomial} {p q acc : Polynomial} :
+    appendMul (m :: p) q acc = q.foldr (fun n acc => m.mul n :: acc) (appendMul p q acc) := rfl
+
+theorem denote_appendMul {p q acc : Polynomial} :
+    Polynomial.denote ctx (appendMul p q acc)
+      = Polynomial.denote ctx p * Polynomial.denote ctx q + Polynomial.denote ctx acc := by
+  induction p generalizing acc with
+  | nil => simp [appendMul, Polynomial.denote_nil]
+  | cons m p ih =>
+    rw [appendMul_cons, denote_foldr_mulCons, ih, Polynomial.denote_cons, add_mul, add_assoc]
+
+theorem denote_flatten {rctx : RealContext} (k : Rat) (e : IntExpr) (acc : Polynomial) :
+    Polynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) (e.flatten k acc)
+      = (k : Real) * (e.denote ictx : Real)
+        + Polynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) acc := by
+  induction e generalizing k acc with
   | val v =>
-    simp only [denote, toPolynomial]
-    split <;> rename_i hv
-    · rewrite [hv, Int.cast_zero]; rfl
-    · simp [Polynomial.denote, Monomial.denote]
+    simp only [flatten, denote]
+    split
+    · rename_i hz
+      have h0 : (k : Real) * (v : Real) = 0 := by
+        rw [← Rat.cast_intCast v, ← Rat.cast_mul, hz, Rat.cast_zero]
+      simp [h0]
+    · simp [Polynomial.denote_cons, Monomial.denote, Rat.cast_mul]
   | var v =>
-    simp [denote, toPolynomial, Polynomial.denote, Monomial.denote]
+    simp [flatten, denote, Polynomial.denote_cons, Monomial.denote]
   | neg a ih =>
-    simp only [denote, toPolynomial, Polynomial.denote_neg, Int.cast_neg, ih]
-  | add a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_add, Int.cast_add, ih₁, ih₂]
-  | sub a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_sub, Int.cast_sub, ih₁, ih₂]
-  | mul a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_mul, Int.cast_mul, ih₁, ih₂]
+    simp only [flatten, denote, ih, Int.cast_neg, Rat.cast_neg, neg_mul, mul_neg]
+  | add a b iha ihb =>
+    simp only [flatten, denote, iha, ihb, Int.cast_add, mul_add, add_assoc]
+  | sub a b iha ihb =>
+    simp only [flatten, denote, iha, ihb, Int.cast_sub, sub_eq_add_neg, mul_add, Rat.cast_neg,
+      neg_mul, mul_neg, add_assoc]
+  | mul a b iha ihb =>
+    simp only [flatten, denote, denote_appendMul, iha k [], ihb 1 [], Polynomial.denote_nil,
+      add_zero, Int.cast_mul, Rat.cast_one, one_mul, mul_assoc]
 
 end IntExpr
 
@@ -365,16 +482,6 @@ deriving Inhabited, Repr
 
 namespace RealExpr
 
-def toPolynomial : RealExpr → Polynomial
-  | .val v => if v = 0 then [] else [{ coeff := v, vars := [] }]
-  | .var v => [{ coeff := 1, vars := [⟨true, v⟩] }]
-  | .neg a => a.toPolynomial.neg
-  | .add a b => Polynomial.add a.toPolynomial b.toPolynomial
-  | .sub a b => Polynomial.sub a.toPolynomial b.toPolynomial
-  | .mul a b => Polynomial.mul a.toPolynomial b.toPolynomial
-  | .divConst a c => Polynomial.divConst a.toPolynomial c.eval
-  | .cast a => a.toPolynomial
-
 noncomputable def denote (ictx : IntContext) (rctx : RealContext) : RealExpr → Real
   | .val v => if v = 0 then 0 else if v = 1 then 1 else v
   | .var v => rctx v
@@ -385,28 +492,56 @@ noncomputable def denote (ictx : IntContext) (rctx : RealContext) : RealExpr →
   | .divConst a c => a.denote ictx rctx / c.denote
   | .cast a => a.denote ictx
 
-theorem denote_toPolynomial {e : RealExpr} : e.denote ictx rctx = e.toPolynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) := by
-  induction e with
+/-- The monomials of `k` times an expression, in the order they occur and without merging,
+    prepended to `acc` (see `IntExpr.flatten`). A division by a constant divides `k`. -/
+def flatten (k : Rat) : RealExpr → Polynomial → Polynomial
+  | .val v, acc =>
+    let c := k * v
+    if c = 0 then acc else { coeff := c, vars := [] } :: acc
+  | .var v, acc => { coeff := k, vars := [⟨true, v⟩] } :: acc
+  | .neg a, acc => flatten (-k) a acc
+  | .add a b, acc => flatten k a (flatten k b acc)
+  | .sub a b, acc => flatten k a (flatten (-k) b acc)
+  | .mul a b, acc => IntExpr.appendMul (flatten k a []) (flatten 1 b []) acc
+  | .divConst a c, acc => flatten (k / c.eval) a acc
+  | .cast a, acc => a.flatten k acc
+
+def toPolynomial (e : RealExpr) : Polynomial :=
+  Polynomial.normalize (e.flatten 1 [])
+
+theorem denote_flatten (k : Rat) (e : RealExpr) (acc : Polynomial) :
+    Polynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) (e.flatten k acc)
+      = (k : Real) * e.denote ictx rctx
+        + Polynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) acc := by
+  induction e generalizing k acc with
   | val v =>
-    simp only [denote, toPolynomial, Polynomial.denote, Monomial.denote]
-    split <;> rename_i hv
-    · simp
-    · split <;> rename_i hv <;> simp [Rat.cast_one, hv]
+    simp only [flatten, denote]
+    split
+    · rename_i hz
+      have h0 : (k : Real) * (v : Real) = 0 := by rw [← Rat.cast_mul, hz, Rat.cast_zero]
+      split <;> (try split) <;> simp_all
+    · split <;> (try split) <;> simp_all [Polynomial.denote_cons, Monomial.denote, Rat.cast_mul]
   | var v =>
-    simp [denote, toPolynomial, Polynomial.denote, Monomial.denote]
+    simp [flatten, denote, Polynomial.denote_cons, Monomial.denote]
   | neg a ih =>
-    simp only [denote, toPolynomial, Polynomial.denote_neg, ih]
-  | add a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_add, ih₁, ih₂]
-  | sub a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_sub, ih₁, ih₂]
-  | mul a b ih₁ ih₂ =>
-    simp only [denote, toPolynomial, Polynomial.denote_mul, ih₁, ih₂]
+    simp only [flatten, denote, ih, Rat.cast_neg, neg_mul, mul_neg]
+  | add a b iha ihb =>
+    simp only [flatten, denote, iha, ihb, mul_add, add_assoc]
+  | sub a b iha ihb =>
+    simp only [flatten, denote, iha, ihb, sub_eq_add_neg, mul_add, Rat.cast_neg, neg_mul, mul_neg,
+      add_assoc]
+  | mul a b iha ihb =>
+    simp only [flatten, denote, IntExpr.denote_appendMul, iha k [], ihb 1 [],
+      Polynomial.denote_nil, add_zero, Rat.cast_one, one_mul, mul_assoc]
   | divConst a c ih =>
-    simp only [denote, toPolynomial, Polynomial.denote_divConst, RealValExpr.eval_eq_denote, ih]
+    rw [flatten, ih, denote, Rat.cast_div, RealValExpr.eval_eq_denote, div_eq_mul_inv,
+      div_eq_mul_inv, mul_assoc, mul_comm (c.denote)⁻¹]
   | cast a =>
-    simp only [denote]
-    exact IntExpr.denote_toPolynomial
+    simp only [flatten, denote, IntExpr.denote_flatten]
+
+theorem denote_toPolynomial {e : RealExpr} : e.denote ictx rctx = e.toPolynomial.denote (fun ⟨b, n⟩ => if b then rctx n else ictx n) := by
+  simp only [toPolynomial, Polynomial.denote_normalize, denote_flatten, Polynomial.denote_nil,
+    add_zero, Rat.cast_one, one_mul]
 
 theorem denote_eq_from_toPolynomial_eq {e₁ e₂ : RealExpr} (h : e₁.toPolynomial = e₂.toPolynomial) : e₁.denote ictx rctx = e₂.denote ictx rctx := by
   rw [denote_toPolynomial, denote_toPolynomial, h]
