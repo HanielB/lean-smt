@@ -46,7 +46,7 @@ register_option smt.alethe.pipeline : String := {
 }
 
 register_option smt.alethe.coreRules : String := {
-  defValue := "ite_simplify eq_simplify not_simplify implies_simplify equiv_simplify bool_simplify comp_simplify and_simplify or_simplify prod_simplify sum_simplify minus_simplify unary_minus_simplify div_simplify"
+  defValue := "ite_simplify eq_simplify not_simplify implies_simplify equiv_simplify bool_simplify comp_simplify and_simplify or_simplify prod_simplify sum_simplify minus_simplify unary_minus_simplify div_simplify ac_simp"
   descr := "the rules Carcara's core pass reduces in the `alethe` tactic (`--core-rules`)"
 }
 
