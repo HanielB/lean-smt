@@ -1,6 +1,2 @@
 /.lake
 /.claude
-# development material: lives on the `alethe-dev` branch, not here
-/CLAUDE-conversation-*.md
-/ALETHE-PLAN.md
-/docs-alethe

@@ -1,0 +1,8 @@
+# LaTeX build products; the PDF itself is tracked
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+auto/
