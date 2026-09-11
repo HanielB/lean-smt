@@ -9,6 +9,8 @@ module
 
 public import Smt.Alethe.Basic
 public meta import Smt.Alethe.Basic
+public import Smt.Alethe.Polyeq
+public meta import Smt.Alethe.Polyeq
 public import Smt.Reconstruct.Builtin.Lemmas
 public meta import Smt.Reconstruct.Builtin.Lemmas
 public import Smt.Reconstruct.Util
@@ -470,8 +472,18 @@ def runAssume (id : String) (t : cvc5.Term) : AletheM Unit := do
     match ← findAssumWithType? p with
     | some h => registerPremise { id, lits := #[t], concl := p, proof := h }
     | none =>
-      -- the same assertion up to representation (e.g. `(to_real 0)` in the problem, `0.0` in the
-      -- proof): keep the proof's view of the term, the kernel unfolds the difference
+      -- the same assertion up to representation, as Carcara accepts it (`polyeq`): equalities in
+      -- either orientation, bound variables renamed, numerals spelled differently (cvc5 prints
+      -- the problem's `0.0` as `0/1`). Keep the proof's view of the term, and prove it from the
+      -- assertion's
+      for (ta, ap, h) in st.asserts do
+        if polyeq t ta then
+          let some he ← polyeqProof? ap p
+            | throwError "assumption '{id}' is the assertion {ta} up to representation, but the \
+                two propositions could not be reconciled:\n  {ap}\n  {p}"
+          registerPremise { id, lits := #[t], concl := p, proof := ← Meta.mkEqMP he h }
+          return
+      -- last resort: definitionally equal propositions, the kernel unfolds the difference
       for (_, ap, h) in st.asserts do
         if ← Meta.isDefEq p ap then
           registerPremise { id, lits := #[t], concl := p, proof := h }

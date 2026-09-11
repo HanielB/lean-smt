@@ -177,6 +177,20 @@ def mkPropList (ts : Array cvc5.Term) : ReconstructM Q(List Prop) :=
     let p : Q(Prop) ← reconstructTerm t
     return q($p :: $ps)) q([])
 
+/-- The value of a numeral: an integer or rational constant, possibly negated (`(- c)`), as a
+    quotient of constants (`(/ c d)`, cvc5's spelling of a rational) or cast (`(to_real c)`). -/
+partial def constValue? (t : cvc5.Term) : Option Rat :=
+  match t.getKind! with
+  | .CONST_INTEGER => some t.getIntegerValue!
+  | .CONST_RATIONAL => some t.getRationalValue!
+  | .NEG => (- ·) <$> constValue? t[0]!
+  | .TO_REAL => constValue? t[0]!
+  | .DIVISION => do
+    let n ← constValue? t[0]!
+    let d ← constValue? t[1]!
+    if d == 0 then none else some (n / d)
+  | _ => none
+
 namespace Arg
 
 def term? : Arg cvc5.Term → Option cvc5.Term
@@ -202,21 +216,9 @@ def int? : Arg cvc5.Term → Option Int
   | _ => none
 
 /-- The rational value of a numeral argument, also accepting `(- c)` and `(/ c d)`. -/
-partial def rat? : Arg cvc5.Term → Option Rat
-  | .term t => go t
+def rat? : Arg cvc5.Term → Option Rat
+  | .term t => constValue? t
   | _ => none
-where
-  go (t : cvc5.Term) : Option Rat :=
-    match t.getKind! with
-    | .CONST_INTEGER => some t.getIntegerValue!
-    | .CONST_RATIONAL => some t.getRationalValue!
-    | .NEG => (- ·) <$> go t[0]!
-    | .DIVISION => do
-      let n ← go t[0]!
-      let d ← go t[1]!
-      if d == 0 then none else some (n / d)
-    | .TO_REAL => go t[0]!
-    | _ => none
 
 def bool? : Arg cvc5.Term → Option Bool
   | .term t => if t.getKind! == .CONST_BOOLEAN then some t.getBooleanValue! else none

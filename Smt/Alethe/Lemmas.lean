@@ -232,6 +232,11 @@ theorem qnt_exists_false {α : Sort u} : (∃ _ : α, False) = False :=
 theorem ne_symm_eq {α : Sort u} (a b : α) : (a ≠ b) = (b ≠ a) :=
   propext ⟨fun h e => h e.symm, fun h e => h e.symm⟩
 
+/-- Equality is symmetric, as an equality of propositions. How an assumption stated as `b = a` is
+    matched with the assertion `a = b` (Carcara's `polyeq` accepts either orientation). -/
+theorem eq_symm_eq {α : Sort u} (a b : α) : (a = b) = (b = a) :=
+  propext eq_comm
+
 /-- `distinct_elim` over three or more Booleans: no three propositions are pairwise distinct. -/
 theorem distinct_bool_false {p q r : Prop} (hpq : p ≠ q) (hpr : p ≠ r) (hqr : q ≠ r) : False :=
   (Classical.em p).elim

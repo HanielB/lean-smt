@@ -14,6 +14,8 @@ public meta import Smt.Alethe.Realize
 public import Smt.Alethe.Lemmas
 public import Smt.Alethe.Basic
 public meta import Smt.Alethe.Basic
+public import Smt.Alethe.Polyeq
+public meta import Smt.Alethe.Polyeq
 public import Smt.Alethe.Clause
 public meta import Smt.Alethe.Clause
 public import Smt.Alethe.Prop
