@@ -476,3 +476,120 @@ They land in the **ring tier** with `+ * bvadd bvmul` — `poly_simp` with reduc
 The one conceptual wrinkle I wrote up in the note: **`ff.add`'s self-inverse property is characteristic-dependent.** Its additive group has exponent = the field characteristic `p`, so for odd `p` it's not self-inverse, but for `p = 2` (i.e. `GF(2^k)`) `x + x = 0` — structurally the *same* exponent-2 abelian group as `bvxor`. Yet they get different owners: `ff.add` stays with `poly_simp` because it's the field's *ring* addition (mod-`p` reduction covers every characteristic, and the char-2 self-inverse law just falls out of reducing mod 2), whereas `bvxor` needs its own rule because in the bitvector theory it's a *bitwise* operator distinct from that theory's ring addition `bvadd` (`Z/2^w`). So "GF(2)-addition" appears twice in the table with two owners, and the deciding question is: *is the operator the canonical ring `+` of its sort, or a bitwise op that merely happens to be GF(2)-linear?*
 
 (Still on disk only — `docs-alethe/` remains gitignored, so this isn't committed unless you want me to `git add -f` it.)
+
+## Turn: 2026-09-11 16:40:31 (session 315b089e)
+
+Committed on `alethe-dev` as `b68d9a3`. Thanks for the correction — you're right on both counts:
+
+- **Branch**: we're on `alethe-dev`, not `alethe`. My code fixes from this session are all here (rebased, matching messages: `4c22527` audit → `b59fa65` qnt_rm_unused/distinct → `edfd908` evaluate → `90623ac`/`5f18168` ac_simp).
+- **gitignore**: `alethe-dev`'s `.gitignore` is just `/.lake` and `/.claude` — `docs-alethe/` and the `CLAUDE-conversation-*.md` logs are **tracked** here (there are explicit `…-dev` commits that flip this: ignore the dev material on `alethe`, track it on `alethe-dev`). My earlier "docs-alethe is gitignored, won't commit" was reading the `alethe`-branch state — wrong for this branch.
+
+So the finite-field table additions and the conversation log are now properly committed. The algebra table itself was already committed on this branch; only the `ff.add`/`ff.mul` rows and note were pending.
+
+Net: on `alethe-dev`, `docs-alethe/rule-audit.md` now holds the full AC-simplification algebra table including the finite-field operators, and everything's committed and clean.
+
+## Turn: 2026-09-11 17:42:42 (session 315b089e)
+
+Short answer: not cleanly — and the reason sharpens the `ff.add` vs `bvxor` distinction from the table.
+
+## Why it doesn't fit as-is
+
+`poly_simp`'s normal form is a polynomial over ℤ, and for a bitvector term it reduces **mod `2^w`** — i.e. it models the ring **`Z / 2^w`**, which is `bvadd`/`bvmul` *with carries*. `bvxor` is a different ring on the *same sort*: it's **`(Z/2)^w`** — `w` independent bits, mod 2 each, **no carry**. So:
+
+- Reducing mod `2^w` is the wrong quotient for xor. `bvxor` needs per-bit mod 2, not whole-value mod `2^w`.
+- To include it, `poly_simp` would have to carry **two** bitvector arithmetics and pick per operator, and — the real trap — a term mixing a carry op (`bvadd`, `bvmul`) with a no-carry op (`bvxor`) on the same vectors spans *both* rings, so it has no single polynomial. Handling that means bit-level reasoning (essentially bitblasting), not polynomial normalization. That's a soundness hazard bolted onto a rule whose whole appeal is one clean ℤ-polynomial normal form.
+
+## Where `bvxor` actually belongs
+
+`bvxor` is associative, commutative, unit `0`, and self-inverse (`x⊕x=0`). Its normal form is just the **parity** of the atoms — an atom survives iff it appears an odd number of times. That is *exactly* lean-smt's `AciNorm` bitset machinery with `Nat.xor` (`^^^`) in place of `Nat.lor` (`|||`):
+
+```
+bits (leaf i)   = 1 <<< i
+bits (node l r) = bits l ^^^ bits r     -- XOR instead of OR ⇒ parity ⇒ x⊕x cancels
+```
+
+with a `denoteXor`/soundness proof mirroring `denoteOr_eq`. So `bvxor` is a **sibling of `semilattice_simp`** (a reflective bitset normalizer, cheap in the kernel), not a member of `poly_simp`.
+
+## The subtlety that makes `ff.add` different
+
+You might object: `ff.add` over `GF(2^k)` is *also* char-2 / XOR-like, yet the table puts it in `poly_simp`. The difference isn't the algebra — it's that the **sort carries only one ring**. A finite field `GF(p)` has a single `+`/`*`, so `poly_simp` mod `p` owns `ff.add` unambiguously (and for `p=2` the mod-2 coefficient reduction *is* the parity normal form). The **bitvector sort carries two incompatible additive structures** — `bvadd` (`Z/2^w`, carry) and `bvxor` (`(Z/2)^w`, no carry) — so `poly_simp`, which fixes one modulus per sort, structurally can't own both. That "one ring per sort vs two" is the deciding line, and it's the same distinction as before (is the operator the canonical ring `+` of its sort?): `ff.add` yes → `poly_simp`; `bvxor` no → its own reflective xor-parity rule.
+
+Want me to add this reasoning (the `bvxor`→xor-parity-bitset note and the "two rings on the bitvector sort" point) to the table's discussion in `rule-audit.md`?
+
+## Turn: 2026-09-11 17:46:42 (session 315b089e)
+
+Added and committed on `alethe-dev` (`ab58128`).
+
+To your question — **you've got it right, with one refinement**: `bvxor` fits the `semilattice_simp` *machinery* cheaply, but not as the *same rule*.
+
+**Cheap part (the machinery):** the entire `AciNorm` scaffold is reused unchanged — `Tree`, `reifyLayer`, the `RArray` atom context, `Tree.toExpr`, and the proof skeleton. You only:
+- fold the leaf bitset with `Nat.xor` (`^^^`) instead of `Nat.lor` (`|||`),
+- add a `denoteXor` (`node l r => Xor …`, `unit => False`),
+- prove one soundness lemma `denoteXor_eq` mirroring `denoteOr_eq`.
+
+The parity argument (same xor-bits ⇒ same odd-multiplicity atoms ⇒ equal xor) is slightly more than the OR/AND `∃`/`∀` arguments — it needs the `x⊕x=False` / `x⊕False=x` cancellation lemmas — but it's the same order (~50–70 lines). And for **Boolean `xor`** it's immediate (it's `Prop`-valued, reusing `Context = Nat → Prop`); only **bitvector `bvxor`** needs a `BitVec`-valued denotation (and BV isn't in lean-smt's scope yet).
+
+**The refinement (why not literally *in* `semilattice_simp`):** OR is idempotent (keep the bit — `x∧x=x`) and XOR is involutive (toggle the bit — `x⊕x=0`). Those are *different folds* giving *different normal forms* — a single `bits` can't do both, so the checker branches on the operator anyway, and the name `semilattice_simp` asserts idempotence, which `bvxor` doesn't have (misnaming it exactly as `bvmul` would be).
+
+So the clean design is a **shared module of reflective bitset normalizers parameterized by the fold** — OR for the bounded semilattices, XOR for the involutive/GF(2) operators, plain count for the bare commutative monoids — exposed as *separate rules*. Adding the XOR sibling is small; merging it under `semilattice_simp` would cost you the accuracy of both the name and the normal form. All of this is now written up in the doc's two new subsections.
+
+## Turn: 2026-09-11 17:49:01 (session 315b089e)
+
+Applying the same discipline as `semilattice_simp` — name the *structure* whose normal form the rule computes, and the structure has to be exact for every operator in it.
+
+## What the rule normalizes
+
+`bvxor` (and Boolean `xor`): associative, commutative, unit, and **self-inverse** (`x∘x = unit`). The normal form is the **parity** of the atoms. The algebraic name for "abelian group in which every element is its own inverse" is an **abelian group of exponent 2** — equivalently a **Boolean group**, equivalently a **GF(2)-vector space** (`(Z/2)^w`).
+
+## Candidates
+
+| name | verdict |
+|---|---|
+| **`boolean_group_simp`** | ✓ **my pick.** "Boolean group" is the standard name for an abelian group of exponent 2 — exactly the self-inverse law that makes parity the normal form. It's the precise sibling of `semilattice_simp` (both name a structure), and it correctly excludes `bvmul`, `+`, `bvadd`. |
+| `xor_simp` | fine as a *transparent* name — everyone knows what xor does — but it's an operator name, not a structure name. It reads as "the xor operator's rule", so it doesn't advertise that it's the *property* (self-inverse) that matters, and it breaks the structural naming scheme the others follow. Acceptable if you value recognizability over consistency. |
+| `parity_simp` | names the **normal form** rather than the structure — a different naming axis than `semilattice_simp`/`poly_simp` (which name structures). Accurate, but inconsistent. |
+| `involutive_simp` | ✗ **avoid.** "Involutive" names a *unary* map with `f(f(x)) = x` (like `bvnot`, `¬`). The binary law here is *self-inverse* (`x∘x = e`), a different thing. The overlap invites confusion with a `not_not`-style rule. |
+| `gf2_simp` | accurate but implies a *field*, and for Boolean `xor` you're not really working in GF(2) as a field, just the additive group; also cryptic. |
+| `exponent_two_simp` | technically exact ("abelian group of exponent 2") but unreadable. |
+
+## Recommendation
+
+**`boolean_group_simp`.** It slots into the naming scheme as the exact structural sibling:
+
+- `semilattice_simp` — idempotent commutative monoid → set normal form (OR fold)
+- `boolean_group_simp` — self-inverse commutative monoid (abelian group of exponent 2) → parity normal form (XOR fold)
+- `poly_simp` — commutative ring → polynomial normal form
+- `assoc_simp` — free monoid (concats) → sequence normal form
+
+If you'd rather optimize for immediate recognizability by proof consumers than for the structural scheme, `xor_simp` is the defensible runner-up. Want me to record `boolean_group_simp` (with `xor_simp` as the alternative) in the table?
+
+## Structural AC rules, round-four status, report restructure (2026-09-11, session 315b089e)
+
+**Round four finished** (both solvers, twelve SMT-LIB logics, 23,328 per solver). cvc5: unsat
+20,037 / Carcara 19,194 / lean-smt valid 16,853 (timeout 2,287, holey 2). veriT: 19,196 / 17,823 /
+15,334 (2,494, 54 — distinct_elim 33, lia_generic 10, bool_simplify 9, qnt_rm_unused 2). Native
+arm: 16,876 / 15,343. CPU: Carcara 9.6 h + 6.5 h vs lean 198 h + 143 h. All holey categories
+except lia_generic fixed since (evaluate/distinct_elim/bool_simplify/qnt_rm_unused).
+
+**Structural AC rules** (you chose the four names: semilattice_simp, boolean_group_simp,
+poly_simp, assoc_simp):
+- Carcara `131f9a1f`: checkers for semilattice_simp (and/or/bvand/bvor; set normal form,
+  annihilator folded in — absorb's law), boolean_group_simp (xor/bvxor; parity), assoc_simp
+  (concat/str.++; sequence); core pass relabels aci_simp/absorb to the structural rule of their
+  operator (checker-verified first) and emits ac_simp/shuffle/nary_elim layers as structural
+  rules; expensive tier's clausal reduction now on semilattice_simp. Rule tests + core tests;
+  all 221 rule tests green. Static rebuilt.
+- lean-smt `82bc238`: AciNorm gains `Tree.absorb` + `bits : Tree → Option Nat` (annihilator,
+  kernel-evaluated) and a parity normalizer for xor (`xbits` with Nat.xor, soundness via
+  `parity ctx m n` over bit positions — XOr_interchange, parity_xor, parity_leaf, denoteXor_eq;
+  compiled first try). Handlers: only poly_simp + the three structural rules; ac_simp/aci_simp/
+  absorb removed. Core-rule lists carry `ac_simp aci_simp absorb`. Eight test proofs relabeled
+  and re-validated; new tests semilattice_absorb, boolean_group. Suite 141/141.
+
+**Report** (`docs-alethe/alethe-lean-smt.tex`, 15 pages): Evaluation rewritten around the four
+configurations (cvc5/veriT × Carcara/lean-smt) for SMT-LIB round four (per-logic table) and
+Sledgehammer; four Carcara-vs-lean-smt scatter plots (smtlib/seventeen × solver) and two cactus
+plots from `~/exp/alethe-lean/plots-round4.py`; per-step-vs-one-term comparison moved to a final
+section (plus a native paragraph); rules section describes the structural rules and the
+annihilator/parity normalizers; Carcara section lists budget, α-bind→refl, structural rules,
+bool_simplify fix. Counts refreshed (96 rules, ~4,900 lines, 52 lemmas).

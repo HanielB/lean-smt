@@ -168,7 +168,8 @@ The rest of this section follows the pipeline: the treatment of the proof
 text (Section~\ref{sec:parsing}), the replay of steps and their submission
 to the kernel (Section~\ref{sec:steps}), the reconstruction techniques per
 rule (Section~\ref{sec:rules}), and the changes this required in \carcara
-(Section~\ref{sec:carcara}). Section~\ref{sec:eval} reports the evaluation.
+(Section~\ref{sec:carcara}). Section~\ref{sec:eval} reports the evaluation,
+and Section~\ref{sec:shapes} the comparison of the kernel submission shapes.
 
 \subsection{From Proof Text to Terms}
 \label{sec:parsing}
@@ -276,7 +277,7 @@ steps that use it and submitting one closed theorem; it is what the
 \subsection{Reconstructing the Rules}
 \label{sec:rules}
 
-The checker handles 93 \alethe rule names, in about 4\,300 lines of Lean
+The checker handles 96 \alethe rule names, in about 4\,900 lines of Lean
 plus the generated \rare table, following the three techniques of \cpc
 reconstruction: theorems, tactics, and verified programs. The dividing line
 with \carcara is drawn per rule: a rule is reconstructed in Lean when a
@@ -294,7 +295,7 @@ definitions, the selection axioms \rulename{ite\_then\_intro} and
 \rulename{ite\_else\_intro} that the core pass derives \rulename{ite\_intro}
 from, \rulename{la\_disequality}, the division rules of \cvcv
 (\rulename{div\_intro}, \rulename{div\_by\_zero\_intro}) and the like are new
-lemmas in an \alethe-specific library of 46 theorems.
+lemmas in an \alethe-specific library of 52 theorems.
 
 \paragraph{Via tactics.} \rulename{la\_generic} is Farkas' lemma:
 the negated literals are introduced as hypotheses, integer bounds are
@@ -339,32 +340,52 @@ with the sort's pass count a \lstinline{Nat} bound, because the kernel does
 not unfold well-founded recursion; the denotation theorems hold for unsorted
 input too, so sortedness is needed only for completeness. The same sum of
 400 variables now costs the kernel 1.3\,s, and 800 cost 3.6\,s at flat
-memory. For \rulename{aci\_simp}, associativity, commutativity
-and idempotence of a connective layer, associative-commutative rewriting
-took seconds per step on \verit proofs with two-hundred-conjunct layers, so
-we wrote a normalizer in the style of \texttt{poly\_norm}:
+memory. The associative-commutative rules are the other reflective family.
+\alethe's \rulename{aci\_simp} named one normal form for a small algebraic
+hierarchy of operators, with \rulename{absorb} for the annihilator on the
+side; the rules are now named by the structure of the operator
+(Section~\ref{sec:carcara}), and each has the normalizer of exactly that
+structure. \rulename{semilattice\_simp} covers the bounded semilattices
+$\wedge$ and $\vee$: associativity, commutativity, idempotence, the neutral
+element and the annihilator. Associative-commutative rewriting took seconds
+per step on \verit proofs with two-hundred-conjunct layers, so we wrote a
+normalizer in the style of \texttt{poly\_norm}:
 \begin{lstlisting}
-inductive Tree | unit | leaf (i : Nat) | node (l r : Tree)
-def bits : Tree → Nat
-  | unit => 0
-  | leaf i => Nat.shiftLeft 1 i
-  | node l r => Nat.lor (bits l) (bits r)
-theorem denoteAnd_eq (ctx : Context) (a b : Tree) (m : Nat)
+inductive Tree | unit | absorb | leaf (i : Nat) | node (l r : Tree)
+def bits : Tree → Option Nat
+  | unit => some 0
+  | absorb => none
+  | leaf i => some (Nat.shiftLeft 1 i)
+  | node l r => match bits l, bits r with
+    | some a, some b => some (Nat.lor a b)
+    | _, _ => none
+theorem denoteAnd_eq (ctx : Context) (a b : Tree) (m : Option Nat)
     (ha : bits a = m) (hb : bits b = m) :
     denoteAnd ctx a = denoteAnd ctx b
 \end{lstlisting}
 The top layer of a side is reified into a \lstinline{Tree} whose leaves
-index a context of atoms, every subterm that is not the connective being an
-atom compared syntactically, as in \carcara's checker; its normal form is
-the bitset of its leaves, which the kernel computes in one structural pass
+index a context of atoms, every subterm that is not the connective or one of
+its two constants being an atom compared syntactically, as in \carcara's
+checker; its normal form is the bitset of its leaves, \lstinline{none} when
+the annihilator occurs, which the kernel computes in one structural pass
 with its accelerated \lstinline{Nat.shiftLeft} and \lstinline{Nat.lor}, and
-\lstinline{denoteAnd_eq} turns two equal bitsets, both established by
+\lstinline{denoteAnd_eq} turns two equal normal forms, both established by
 \lstinline{Eq.refl}, into the equality of the formulas. Soundness is
-\lstinline{denoteAnd ctx t ↔ ∀ i, (bits t).testBit i → ctx i}, proved by
-induction on the tree. A 200-atom layer costs the kernel 33\,ms, against
-34\,s for a first attempt with a nested inductive and an insertion sort,
-where the kernel's unfolding of nested structural recursion dominated. The
-same normalizer now serves \cvcv's \texttt{ACI\_NORM} in \cpc proofs.
+\lstinline{denoteAnd ctx t ↔ ∀ i, testBit m i → ctx i} when
+\lstinline{bits t = some m}, and \lstinline{denoteAnd ctx t ↔ False} when it
+is \lstinline{none}, both by induction on the tree. A 200-atom layer costs the
+kernel 33\,ms, against 34\,s for a first attempt with a nested inductive and
+an insertion sort. \rulename{boolean\_group\_simp} covers \texttt{xor}, an
+abelian group of exponent two, with the same machinery and a different fold:
+the bitset is combined with \lstinline{Nat.xor} instead of \lstinline{Nat.lor},
+so that a pair $x \oplus x$ cancels and the normal form is the \emph{parity}
+of the atoms; soundness goes through the parity of the set bits of a mask
+over the bit positions, with the interchange law
+$(a \oplus b) \oplus (c \oplus d) = (a \oplus c) \oplus (b \oplus d)$ doing
+the regrouping. The two are siblings, not one rule: idempotence keeps a bit
+and self-inverse toggles it. \rulename{assoc\_simp}, for the concatenations,
+has no operator in the checker's scope. The semilattice normalizer also
+serves \cvcv's \texttt{ACI\_NORM} in \cpc proofs.
 
 \paragraph{Rewrite rules.} \cvcv's rewrites reach \alethe as
 \rulename{rare\_rewrite} steps naming a \rare rule and its arguments. A
@@ -383,13 +404,19 @@ chain of \rare steps, which the table then covers.
 
 \paragraph{Legacy rules.} \verit's \rulename{ac\_simp}, \rulename{qnt\_cnf},
 \rulename{ite\_intro} and \rulename{bfun\_elim} are likewise delegated to the
-core pass, which since its latest revision reduces \rulename{bfun\_elim}
-completely, both the expansion of a quantifier over Boolean variables into
-its instances and the replacement of a Boolean argument of an application by
-an if-then-else, and derives \rulename{ite\_intro} from the selection axioms.
-The application form of \rulename{bfun\_elim} is also reconstructed
-natively, by case analysis on the Boolean arguments, for proofs elaborated
-without delegating it.
+core pass, which reduces \rulename{bfun\_elim} completely, both the expansion
+of a quantifier over Boolean variables into its instances and the replacement
+of a Boolean argument of an application by an if-then-else, derives
+\rulename{ite\_intro} from the selection axioms, and decomposes a nested
+\rulename{ac\_simp} into one \rulename{semilattice\_simp} per connective layer
+lifted by \rulename{cong} --- the single-layer normalizer sees a nested
+opposite connective as an atom, so the decomposition is what lets the
+reflective check apply layer by layer. \rulename{aci\_simp} and
+\rulename{absorb} themselves are relabeled by the core pass to the structural
+rule of their operator, so the checker reconstructs only \rulename{poly\_simp}
+and the three structural rules. The application form of \rulename{bfun\_elim}
+is also reconstructed natively, by case analysis on the Boolean arguments, for
+proofs elaborated without delegating it.
 
 \paragraph{Instances.} One consequence of substitution is worth recording.
 The instantiation of a quantified Boolean variable that occurs in an
@@ -406,7 +433,7 @@ instantiated body and the stated conclusion are not definitionally equal.
 \label{sec:carcara}
 
 Besides being the elaborator, \carcara is the reference the checker is
-measured against, and this work changed it in five places, all on the
+measured against, and this work changed it in several places, all on the
 \texttt{bv-fixes} branch. The \texttt{-{}-core-rules} flag restricts the core
 passes to the listed rules, so that a pipeline can delegate exactly the rules
 its consumer does not reconstruct. Under \texttt{-{}-expand-let-bindings}, the
@@ -415,82 +442,327 @@ since a consumer expanding lets has nothing left to prove there. The
 \texttt{polyeq} pass canonicalizes Skolem witnesses, and the
 \rulename{sko\_forall} and \rulename{sko\_ex} rules become strict under
 elaborated granularity, which removed the last discrepancy in \verit's nested
-Skolemizations; \rulename{qnt\_join} merges a whole prefix of nested
-quantifiers. Finally, named terms open in let-bound variables are macros
-under let expansion, as described in Section~\ref{sec:parsing}. The core
-transformation of \rulename{bfun\_elim} and \rulename{ite\_intro} was
-revised on the \texttt{coreAlethe} branch and merged.
+Skolemizations; the same pass replaces every \rulename{bind} subproof whose
+two sides are alpha-equivalent --- \verit's identity substitutions and pure
+renamings --- by one \rulename{refl}, which halves the \rulename{bind}
+subproofs of a typical Sledgehammer proof; \rulename{qnt\_join} merges a
+whole prefix of nested quantifiers. Named terms open in let-bound variables
+are macros under let expansion, as described in Section~\ref{sec:parsing}.
 
-\section{Evaluation So Far}
+A \texttt{budget} pass splits a \rulename{resolution} over more than
+\texttt{-{}-resolution-budget} premises (64 by default) into a chain of
+shorter resolutions with the contraction and weakening steps the pieces need;
+it turned the two chains of a QF\_UF proof the kernel could not hold in memory
+into pieces of a few seconds each, at 90 extra steps in 40\,000.
+
+The associative-commutative vocabulary was reorganized. \rulename{aci\_simp}
+normalized operators that form a hierarchy --- the bounded semilattices
+\texttt{and}, \texttt{or}, \texttt{bvand}, \texttt{bvor} (associative,
+commutative, idempotent, with a unit and an annihilator), the abelian groups
+of exponent two \texttt{xor} and \texttt{bvxor} (every element its own
+inverse), the free monoids \texttt{concat} and \texttt{str.++} (not
+commutative), and the commutative rings \texttt{+}, \texttt{*},
+\texttt{bvadd}, \texttt{bvmul} --- under one name and one normal form, and
+\rulename{absorb} stated the annihilator law on its own. Three checker rules
+now split them by structure, each with exactly its operators' normal form:
+\rulename{semilattice\_simp} (a set, collapsing to the annihilator when it
+occurs), \rulename{boolean\_group\_simp} (a parity) and \rulename{assoc\_simp}
+(a sequence); the rings are \rulename{poly\_simp}'s, whose polynomial normal
+form also covers the finite-field operators \texttt{ff.add} and
+\texttt{ff.mul} modulo the characteristic. The core pass relabels
+\rulename{aci\_simp} and \rulename{absorb} to the structural rule of their
+operator after that rule's checker accepts the conclusion, and emits the
+layers of \rulename{ac\_simp}, \rulename{shuffle} and \rulename{nary\_elim}
+as structural rules, so no legacy AC name survives it; the legacy checkers
+remain for proofs checked without elaboration. Finally, the core recipe for
+\rulename{bool\_simplify}'s modus-ponens rewrites chose the implication
+conjunct by shape and failed when the antecedent was itself an implication;
+it now takes it from the rewrite's label. The core transformation of
+\rulename{bfun\_elim} and \rulename{ite\_intro} was revised on the
+\texttt{coreAlethe} branch and merged.
+
+\section{Evaluation}
 \label{sec:eval}
+
+Two corpora, and on each the four configurations that matter for the
+question at hand: each solver's proof checked by \carcara, and elaborated by
+\carcara and checked by \tactic. The \tactic arm is the per-step shape, the
+default (Section~\ref{sec:steps}); the other shapes are compared in
+Section~\ref{sec:shapes}. Every benchmark runs on one core of a 16-core node
+with 12\,GB and 2\,700\,s: 150\,s for the solver, 300\,s each for \carcara's
+check and the elaboration, and 900\,s for the checker. Times below are CPU,
+not wall: the checker reads its build over a network filesystem, which costs
+several seconds of wall time on a cold node.
 
 \subsection{SMT-LIB}
 \label{sec:smtlib}
 
-\paragraph{The corpus.} The evaluation runs, per solver, over the unsatisfiable
-non-incremental SMT-LIB benchmarks of QF\_UF, QF\_LIA and QF\_LRA (9\,812 each,
-from the SMT-LIB 2025 catalog), on 16-core nodes with one core, 12\,GB and
-2\,700\,s per benchmark: 150\,s for the solver, 300\,s each for \carcara's
-check and the elaboration, and 900\,s for each of the two \tactic arms, which
-share one solve and one elaboration so that the two shapes are compared on the
-same proof. Times below are CPU, not wall: the checker reads its build over a
-network filesystem, which costs several seconds of wall time on a cold node.
+\paragraph{The corpus.} The unsatisfiable non-incremental SMT-LIB benchmarks
+of the twelve logics in the checker's scope --- QF\_UF, QF\_IDL, QF\_RDL,
+QF\_LIA, QF\_LRA, QF\_UFIDL, QF\_UFLIA, QF\_UFLRA, UF, UFIDL, UFLIA and UFLRA
+--- as the SMT-LIB 2025 catalog lists them: 23\,328 per solver.
 
-\paragraph{Outcomes.} Table~\ref{tab:round} gives the round. \carcara accepts
-95 to 99\% of the QF\_UF proofs and 82 to 90\% of the arithmetic ones (what it
-rejects is almost entirely \verit's \rulename{lia\_generic}, whose steps it does
-not check either); elaboration then succeeds on all but a handful. The checker
-validates 5\,214 of the 7\,329 elaborated \cvcv proofs and 4\,780 of the 6\,870
-\verit ones. The picture per logic is uneven in an informative way: the
-arithmetic proofs are small and the checker gets 91\% (QF\_LIA) and 79\%
-(QF\_LRA) of them for \cvcv, against 59\% of QF\_UF, whose proofs are an order
-of magnitude larger.
+\paragraph{Outcomes.} Table~\ref{tab:smtlib} gives the round per logic.
+\cvcv proves 20\,037 benchmarks unsatisfiable and \verit 19\,196; \carcara
+accepts 19\,194 and 17\,823 of the proofs, and the checker validates 16\,853
+and 15\,334. Of the proofs it does not validate, 2\,287 and 2\,494 are
+timeouts and 2 and 54 have a trusted step; the two counts are independent
+verdicts on the same proof, which is why the checker validates more QF\_UFLIA
+\verit proofs than \carcara accepts --- \carcara reports a proof with a
+\rulename{lia\_generic} step holey, and the checker closes that step with
+\texttt{omega}. The picture per logic is uneven in an informative way: the
+quantified logics and the arithmetic ones are nearly complete (99\% of UF,
+UFLIA, QF\_LIA), while QF\_UF, whose proofs are an order of magnitude larger,
+is at 59\%, and QF\_IDL, whose bounded-model-checking proofs are large too, at
+58\% and 41\%.
 
 \begin{table}[t]
   \centering
-  \caption{The round, 9\,812 benchmarks per solver. \emph{Valid} counts proofs
-    checked with no trusted step; the two \tactic columns are the two kernel
-    submission shapes.}
-  \label{tab:round}
-  \begin{tabular}{l l r r r @{\qquad} r r @{\qquad} r r}
+  \caption{The SMT-LIB round, 23\,328 benchmarks per solver. \emph{unsat} is
+    what the solver proved; \carcara the proofs it accepts; \tactic the proofs
+    the checker validates with no trusted step, with its timeouts and its
+    proofs with a trusted step (\emph{holey}).}
+  \label{tab:smtlib}
+  \small
+  \begin{tabular}{l r @{\quad} r r r r r @{\quad} r r r r r}
     \toprule
-    & & \multicolumn{3}{c}{pipeline} & \multicolumn{2}{c}{\tactic, per step}
-    & \multicolumn{2}{c}{\tactic, one term} \\
-    \cmidrule(lr){3-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
-    solver & logic & unsat & \carcara & elab. & valid & timeout & valid & timeout \\
+    & & \multicolumn{5}{c}{\cvcv} & \multicolumn{5}{c}{\verit} \\
+    \cmidrule(lr){3-7} \cmidrule(lr){8-12}
+    logic & bench. & unsat & \carcara & \tactic & t/o & holey
+                   & unsat & \carcara & \tactic & t/o & holey \\
     \midrule
-    \multirow{4}{*}{\cvcv}
-      & QF\_UF  & 4\,324 & 4\,297 & 4\,294 & 2\,526 & 1\,762 & 1\,952 & 1\,770 \\
-      & QF\_LIA & 2\,794 & 2\,509 & 2\,509 & 2\,272 &    190 & 1\,460 &    163 \\
-      & QF\_LRA &    581 &    526 &    526 &    416 &    110 &    199 &     91 \\
-      & total   & 7\,699 & 7\,332 & 7\,329 & 5\,214 & 2\,062 & 3\,611 & 2\,024 \\
+    QF\_UF    & 4\,361 & 4\,324 & 4\,296 & 2\,527 & 1\,763 & 0 & 4\,193 & 4\,175 & 2\,446 & 1\,729 & 0 \\
+    QF\_IDL   &    917 &    633 &    475 &    276 &    196 & 2 &    645 &    538 &    222 &    293 & 0 \\
+    QF\_RDL   &    113 &     88 &     74 &     39 &     35 & 0 &     95 &     28 &     15 &     13 & 0 \\
+    QF\_LIA   & 4\,748 & 2\,794 & 2\,511 & 2\,341 &    152 & 0 & 2\,611 & 2\,314 & 2\,220 &    187 & 10 \\
+    QF\_LRA   &    703 &    582 &    526 &    425 &    101 & 0 &    580 &    387 &    282 &    105 & 0 \\
+    QF\_UFIDL &    422 &    268 &     38 &     30 &      8 & 0 &    271 &     64 &     47 &     16 & 0 \\
+    QF\_UFLIA &    192 &    174 &    172 &    166 &      4 & 0 &    173 &    130 &    172 &      1 & 0 \\
+    QF\_UFLRA &    511 &    511 &    441 &    432 &      9 & 0 &    415 &      3 &      3 &      0 & 0 \\
+    UF        & 3\,505 & 3\,155 & 3\,155 & 3\,145 &      7 & 0 & 2\,897 & 2\,881 & 2\,860 &      3 & 1 \\
+    UFIDL     &     53 &     53 &     53 &     53 &      0 & 0 &     51 &     51 &     51 &      0 & 0 \\
+    UFLIA     & 7\,793 & 7\,445 & 7\,443 & 7\,409 &     12 & 0 & 7\,255 & 7\,242 & 7\,006 &    147 & 43 \\
+    UFLRA     &     10 &     10 &     10 &     10 &      0 & 0 &     10 &     10 &     10 &      0 & 0 \\
     \midrule
-    \multirow{4}{*}{\verit}
-      & QF\_UF  & 4\,193 & 4\,174 & 4\,174 & 2\,444 & 1\,728 & 2\,048 & 1\,579 \\
-      & QF\_LIA & 2\,607 & 2\,309 & 2\,308 & 2\,058 &    171 &    995 &    444 \\
-      & QF\_LRA &    584 &    388 &    388 &    278 &    108 &     93 &    102 \\
-      & total   & 7\,384 & 6\,871 & 6\,870 & 4\,780 & 2\,007 & 3\,136 & 2\,125 \\
+    total     & 23\,328 & 20\,037 & 19\,194 & 16\,853 & 2\,287 & 2 & 19\,196 & 17\,823 & 15\,334 & 2\,494 & 54 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Per step against one term.} Figure~\ref{fig:stepshot} puts the two
-shapes side by side. Per-step checking dominates in every logic and for both
-solvers: it validates 1\,603 proofs (\cvcv) and 1\,644 (\verit) that the
-one-term shape does not, and there is not a single proof in the other
-direction. On the proofs both check it is also slightly cheaper. The one-term
-failures that are not timeouts split in two. About six hundred per solver are
-the single kernel call rejected for excessive memory, the cost of holding the
-whole derivation at once. The other thousand per solver were a defect of
-term mode found by this run: step by step, a premise is a hypothesis whose
-declared type is the clause the proof states, while in one term it is the
-proof itself, whose inferred type is only definitionally that clause, and the
-congruence reconstructor, reading a premise's type, saw something else. A
-term-mode step now carries its stated type, and the one-term column of the
-next run will be correspondingly higher; the memory failures remain, and the
-measurement that led us to keep per-step checking as the default
-(Section~\ref{sec:steps}) holds at corpus scale. It is the opposite of what
-the \cpc path does.
+\paragraph{Against \carcara.} Figure~\ref{fig:smtlib} plots, per proof,
+\carcara's check of the solver's proof against the elaboration plus the
+checker's check of the elaborated one. \carcara checks a proof in a median of
+0.04\,s (\cvcv) and 0.01\,s (\verit), the checker in 5.8\,s and 5.2\,s ---
+of which about five seconds is the fixed cost of loading the library, so the
+proofs of the quantified logics cost it almost nothing beyond that --- and the
+ratio grows with the proof: in QF\_UF the medians are 0.78\,s against 52\,s
+and 0.14\,s against 45\,s, and the timeouts sit above proofs \carcara disposes
+of in a second or two. Over the round \carcara spends 9.6 and 6.5 CPU hours
+and the checker 198 and 143. That is the price of a proof term the kernel
+accepts, and it makes the interesting question not whether the checker
+competes with a dedicated one but how far up the size distribution it
+reaches: the timeouts start around 20\,000 elaborated steps and are the
+rule above 50\,000.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-smtlib-cvc5}
+  \hfill
+  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-smtlib-veriT}
+  \caption{\carcara's check of the solver's proof against the elaboration plus
+    \tactic's check, on the SMT-LIB proofs \carcara accepts, CPU seconds. Red
+    points are proofs the checker did not finish within its limit; the grey
+    lines are equality and factors of ten and a hundred.}
+  \label{fig:smtlib}
+\end{figure}
+
+\paragraph{How the cost accumulates.} Figure~\ref{fig:cactus} plots, for each
+configuration, the cumulative solving and checking time against the number of
+benchmarks it validated, in the style of the \tactic paper. The checker
+follows \carcara closely over the first thousands of benchmarks --- the small
+proofs of the quantified logics, where both are dominated by the solving ---
+and then separates in slope and in where it stops. Within the whole budget
+\carcara needs for every proof it accepts, solving included (26.5 CPU hours
+for \cvcv, 14.3 for \verit), the checker validates the first 12\,661 and
+10\,464 of them.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.72\textwidth]{cactus-smtlib}
+  \caption{Cumulative solving and checking time against the number of SMT-LIB
+    benchmarks whose proof the configuration validated. \carcara validates
+    19\,194 \cvcv proofs in 26.5 CPU hours and 17\,823 \verit proofs in 14.3;
+    the checker validates 16\,853 and 15\,334 in 205 and 147.}
+  \label{fig:cactus}
+\end{figure}
+
+\paragraph{What is left.} Rule coverage is essentially complete and the
+residue is small enough to enumerate. \cvcv leaves two proofs, both QF\_IDL
+bounded-model-checking instances whose \rulename{evaluate} steps equate ground
+Boolean formulas containing equalities between propositions --- \texttt{=} on
+\texttt{Prop} has no computable decidability instance, so \texttt{decide}
+could not run and there was no atom to case-split on; the reconstructor now
+rewrites those equalities to \texttt{↔} and evaluates. \verit leaves 54: 33
+\rulename{distinct\_elim} steps over the large enumerations of the ESC/Java
+benchmarks, where the pairwise conversion embedded the whole conjunct list in
+each of $n^2$ projections and exhausted the kernel's memory, now proved by
+congruence on the conjunction; 9 \rulename{bool\_simplify} steps \carcara's
+core pass had left unreduced (Section~\ref{sec:carcara}); 2
+\rulename{qnt\_rm\_unused} over an existential, which the universal
+reconstruction could not close; and 10 \rulename{lia\_generic}, \verit's
+oracle rule, closed by \texttt{omega} when in its fragment and trusted
+otherwise. All but the last are fixed, with a regression test each, and the
+same benchmark that surfaced the \rulename{evaluate} case also carried
+\rulename{ac\_simp} steps over nested layers with an annihilator, which is
+what motivated the structural rules. The rest is scale: the timeouts, whose
+remedy is the reflective resolution checker described in the accompanying
+notes, not a rule.
+
+\subsection{The Sledgehammer Set}
+\label{sec:seventeen}
+
+\paragraph{The corpus.} The 5\,000 SMT2 problems of the ``Seventeen provers
+under the hammer'' baseline set, the quantified Isabelle goals the \tactic
+paper evaluates on, with the same limits, and with \cvcv given the
+instantiation options that paper used. These proofs are two to three orders
+of magnitude smaller than the SMT-LIB ones: a median of 58 elaborated steps
+for \cvcv and 110 for \verit, against tens of thousands in QF\_UF.
+
+\paragraph{Outcomes.} Table~\ref{tab:seventeen} gives the round. Coverage is
+close to total: the checker validates 2\,858 of the 2\,868 \cvcv proofs
+\carcara accepts (99.7\%) and 2\,520 of the 2\,598 \verit ones (97.0\%), with
+one and three timeouts. What limits the round is the solver, not the checker
+--- 2\,869 and 2\,681 of the 5\,000 problems are proved unsatisfiable at all
+--- and, for \verit, \carcara's own check, which rejects 83 proofs.
+
+\begin{table}[t]
+  \centering
+  \caption{The Sledgehammer round, 5\,000 problems per solver; the columns of
+    Table~\ref{tab:smtlib}, with the CPU hours each checker spends on the
+    proofs it validates (elaboration included for \tactic).}
+  \label{tab:seventeen}
+  \begin{tabular}{l r r r r r @{\qquad} r r}
+    \toprule
+    solver & unsat & \carcara & \tactic & t/o & holey & \carcara h & \tactic h \\
+    \midrule
+    \cvcv  & 2\,869 & 2\,868 & 2\,858 & 1 &  9 & 0.04 & 4.5 \\
+    \verit & 2\,681 & 2\,598 & 2\,520 & 3 & 51 & 0.02 & 3.8 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Against \carcara.} Figure~\ref{fig:sh} is the comparison of
+Figure~\ref{fig:smtlib} on this corpus. \carcara checks and elaborates in a
+median of 0.02\,s and 0.01\,s; the checker's median of 5.0\,s (\cvcv) and
+5.1\,s (\verit) is almost entirely the cost of loading the library, not of
+checking, which is why the points form a horizontal band. Over the round the
+checker costs 4.5 and 3.8 CPU hours, against 72.2 and 92.8 hours of solving.
+The few timeouts sit at the top of the size distribution --- 516 elaborated
+steps for \cvcv's one, and 2\,876 to 3\,015 for \verit's three.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-seventeen-cvc5}
+  \hfill
+  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-seventeen-veriT}
+  \caption{\carcara's check against the elaboration plus \tactic's check on
+    the Sledgehammer proofs, CPU seconds. The band is the fixed cost of loading
+    the library.}
+  \label{fig:sh}
+\end{figure}
+
+\paragraph{How the cost accumulates.} Figure~\ref{fig:cactussh} is the
+cumulative plot for this corpus, and it looks different in an instructive
+way. Restricted to the proofs each configuration validates, solving is cheap
+--- a median of a third of a second for \cvcv and a tenth for \verit --- so
+the curves are dominated by what comes after it. \carcara disposes of all
+2\,868 \cvcv proofs in 1.37 CPU hours including the solving, and of 2\,598
+\verit ones in 1.22; the checker takes 5.8 and 5.0 for 2\,858 and 2\,520 of
+them, four times as much for all but a handful fewer. The checker's curve is
+close to a straight line, because on proofs this small its cost is the fixed
+one of loading the library rather than anything about the derivation. Within
+\carcara's whole budget the checker validates the first 1\,059 (\cvcv) and
+963 (\verit).
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.72\textwidth]{cactus-seventeen}
+  \caption{Cumulative solving and checking time against the number of
+    Sledgehammer benchmarks whose proof the configuration validated. The
+    \tactic curves are nearly straight.}
+  \label{fig:cactussh}
+\end{figure}
+
+\paragraph{What is left.} The residue is small and, for each solver, of one
+kind. \cvcv leaves nine proofs: eight whose \rulename{bind} step the kernel
+rejected with a type mismatch --- \verit-style anchors that both keep a
+variable and substitute it, since read consistently --- and one genuine
+\rulename{hole}. \verit leaves 51, of which 47 are \rulename{onepoint}: 37
+because the anchor assigned two or three variables at once where the
+reconstructor supported one, and 13 because the guard equality sat in a body
+shape its traversal did not reach; the reconstructor is now the general one,
+following \carcara's \texttt{extract\_points}, and closes all of them. The
+remaining four are three \rulename{qnt\_simplify} steps, since reconstructed,
+and one \rulename{symm}/\rulename{trans} pair inside a \rulename{bind} whose
+subproof both renames a variable and flips an equality; \carcara's
+\rulename{symm} is name-syntactic there and the block has no consistent
+reading as terms, so the remedy is on the producer's side --- the alpha-
+equivalent \rulename{bind}s that \carcara's \texttt{polyeq} now closes by
+\rulename{refl} remove every other instance of the pattern.
+
+\subsection{What the Proofs Revealed}
+
+Checking against a second, independent reading of the rules paid off in both
+directions. On the producer side: \verit's open named terms, its identity
+substitutions \texttt{(:= (?x S) ?x)} in every \rulename{bind}, its fresh
+names colliding with inner binders, the eleven Sledgehammer proofs whose
+\rulename{bfun\_elim} the core pass silently kept, \carcara's modus-ponens
+recipe, and the annihilator that \rulename{aci\_simp} did not name. On the
+checker side: an \rulename{onepoint} guard refutation building
+\lstinline{Or.inl} with an application builder that cannot infer the other
+disjunct, exposed only when the cluster reached the \cvcv UF benchmarks; the
+\texttt{Decidable} instance mismatch of Section~\ref{sec:rules}; the
+quadratic construction of batch terms, caught by the first batch sweep; the
+term-mode premise types; the hoisted definitional checks, which cost 49\,s on
+a \rulename{trans} step whose links all matched syntactically; and the
+polynomial normalizer's insertion fold, the per-literal tightening that gave
+\texttt{omega} the whole local context, and the pairwise
+\rulename{distinct\_elim} conversion, each a term whose size the kernel could
+not bear. A rule-by-rule audit of the reconstructors against \carcara's
+checkers, done after the SMT-LIB round, closed the remaining differences a
+solver can produce --- the four argument orientations of \rulename{cong}
+between two equalities, \rulename{distinct\_elim} over Booleans, both forms
+of \rulename{la\_tautology}, the empty clause from \texttt{(not true)}, and
+\rulename{lia\_generic} by \texttt{omega}. Every finding is a regression
+test.
+
+\section{Per-Step Against One-Term Submission}
+\label{sec:shapes}
+
+The per-step shape is the default, and the measurements above use it. This
+section records what led to that choice: the comparison with the one-term
+shape, in which the whole derivation is reconstructed as one term and checked
+in a single kernel call --- the shape the \cpc path uses --- made on the
+three-logic SMT-LIB round that preceded the twelve-logic one (QF\_UF, QF\_LIA
+and QF\_LRA, 9\,812 benchmarks per solver) and on the Sledgehammer round; and
+the comparison with the \texttt{native} variant, made on the twelve-logic
+round.
+
+\paragraph{SMT-LIB.} Figure~\ref{fig:stepshot} puts the two shapes side by
+side. Per-step checking dominates in every logic and for both solvers: it
+validates 1\,603 proofs (\cvcv) and 1\,644 (\verit) that the one-term shape
+does not, and there is not a single proof in the other direction. On the
+proofs both check it is also slightly cheaper. The one-term failures that are
+not timeouts split in two. About six hundred per solver are the single kernel
+call rejected for excessive memory, the cost of holding the whole derivation
+at once. The other thousand per solver were a defect of term mode found by
+this run: step by step, a premise is a hypothesis whose declared type is the
+clause the proof states, while in one term it is the proof itself, whose
+inferred type is only definitionally that clause, and the congruence
+reconstructor, reading a premise's type, saw something else. A term-mode step
+now carries its stated type; the memory failures remain, and the measurement
+that led us to keep per-step checking as the default
+(Section~\ref{sec:steps}) holds at corpus scale.
 
 \begin{figure}[t]
   \centering
@@ -514,141 +786,14 @@ the \cpc path does.
   \label{fig:stepshotarith}
 \end{figure}
 
-\paragraph{Against \carcara.} Figure~\ref{fig:carcara} compares the whole
-\tactic pipeline, elaboration included, with \carcara's own check of the
-solver's proof. \carcara checks a QF\_UF proof in a median of 0.79\,s (\cvcv)
-and 0.14\,s (\verit), and elaborates it in 1.10\,s and 0.33\,s; the checker
-takes a median of 51\,s and 45\,s on the proofs it validates. The arithmetic
-proofs are far smaller: there \carcara's median is a hundredth of a second in
-QF\_LIA and three tenths in QF\_LRA, against 4\,s and 6\,s for the checker
-(\cvcv). The whole round costs \carcara 5.7 and 7.5 CPU hours against the
-checker's 641 and 604, and the ratio grows with the proof: the timeouts sit
-above proofs \carcara disposes of in a second or two. That is the price of a
-proof term the kernel accepts, and it makes the interesting question not
-whether the checker competes with a dedicated one but how far up the size
-distribution it reaches.
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-QF_UF-cvc5}
-  \hfill
-  \includegraphics[width=0.49\textwidth]{carcara-vs-lean-QF_UF-veriT}
-  \caption{\carcara's check plus the elaboration against \tactic's per-step
-    check, QF\_UF, CPU seconds. Red points are proofs the checker did not
-    finish within its limit.}
-  \label{fig:carcara}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.72\textwidth]{cactus-QF_UF}
-  \caption{Cumulative solving and checking time against the number of QF\_UF
-    benchmarks whose proof the configuration validated, in the style of the
-    \tactic paper. Solving is included, which is why the \carcara curves start
-    where they do. \carcara validates 4\,294 \cvcv proofs in 7.3 CPU hours and
-    4\,174 \verit proofs in 2.0; the checker validates 2\,526 and 2\,444 in 78
-    and 64 hours, and the one-term curves stop earlier still.}
-  \label{fig:cactus}
-\end{figure}
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.49\textwidth]{cactus-QF_LIA}
-  \hfill
-  \includegraphics[width=0.49\textwidth]{cactus-QF_LRA}
-  \caption{Cumulative time in the arithmetic logics. \carcara validates every
-    QF\_LIA proof of \cvcv in 5.4 CPU hours and the checker 2\,272 of them in
-    36; in QF\_LRA, 3.0 hours against 10 for 416 of 526.}
-  \label{fig:cactusarith}
-\end{figure}
-
-\paragraph{How the cost accumulates.} Figure~\ref{fig:cactus} plots, for each
-configuration, the cumulative time against the number of benchmarks it
-validated, as the \tactic paper does. The shape is the familiar one: the
-checker follows \carcara closely over the first few hundred benchmarks and then
-separates, both in slope and in where it stops. Reading the curves at a fixed
-budget rather than at the end gives the practical summary: within the 7.3 CPU
-hours \carcara needs for every \cvcv proof, the checker validates roughly the
-first 1\,400 of them, and it needs ten times that budget to reach 2\,526.
-
-\paragraph{What is left.} Across the 6\,175 QF\_UF tasks of both solvers the
-trusted steps number five: two \rulename{resolution} and one \rulename{subproof}
-the kernel rejected for memory on steps with thousands of literals, and three
-\rulename{subproof} type mismatches that were a real gap in the congruence over
-$n$-ary \texttt{distinct}, since fixed. Rule coverage for this logic is
-therefore complete, and what remains is scale: the timeouts start at 19\,000
-elaborated steps for \verit and 29\,000 for \cvcv, with medians of 33\,000 and
-52\,000. In the arithmetic logics, still running, the picture is the same with
-two additions: \verit's \rulename{lia\_generic} is an oracle rule and trusted by
-design (163 proofs), and \rulename{la\_generic} (105 \verit proofs) and
-\rulename{poly\_simp} (27 \cvcv proofs) steps over the thousand-variable sums
-of the SMPT Referendum benchmarks exhausted the kernel's memory. Reproducing
-the latter on the same benchmark at ten sizes separated three causes, all
-since fixed: the polynomial normalizer's insertion fold
-(Section~\ref{sec:rules}), the per-literal tightening that gave \texttt{omega}
-the whole local context and ran it even for unit gains, and a \rulename{trans}
-reconstructor whose definitional fallback ran unconditionally because
-do-notation hoists a \texttt{(← …)} out of an \texttt{else if}. The
-thousand-variable \rulename{la\_generic} that exhausted 10\,GB now checks in
-7\,s and 2.6\,GB, the 503-literal one in 24\,s. The two \rulename{la\_generic}
-failures that were not resource limits needed the rounding of a non-strict
-integer bound to a multiple of its coefficients' gcd, which the
-integer-incompleteness benchmarks exercise; that is fixed as well. The SMT-LIB
-round will be repeated once the Sledgehammer round now running has been
-analyzed.
-
-\subsection{The Sledgehammer Set}
-\label{sec:seventeen}
-
-\paragraph{The corpus.} The second round runs over the 5\,000 SMT2 problems of
-the ``Seventeen provers under the hammer'' baseline set, the quantified
-Isabelle goals the \tactic paper evaluates on, with the same three arms and the
-same limits, and with \cvcv given the instantiation options that paper used.
-These proofs are two to three orders of magnitude smaller than the SMT-LIB
-ones: a median of 61 elaborated steps for \cvcv and 115 for \verit, against
-tens of thousands in QF\_UF.
-
-\paragraph{Outcomes.} Table~\ref{tab:seventeen} gives the round. Coverage is
-close to total: the checker validates 2\,858 of the 2\,867 elaborated \cvcv
-proofs (99.7\%) and 2\,520 of the 2\,595 \verit ones (97.1\%), with one and
-three timeouts. What limits the round is the solver, not the checker --- 2\,869
-and 2\,681 of the 5\,000 problems are proved unsatisfiable at all --- and, for
-\verit, \carcara's own check, which rejects 83 proofs.
-
-\begin{table}[t]
-  \centering
-  \caption{The Sledgehammer round, 5\,000 problems per solver. The columns are
-    those of Table~\ref{tab:round}.}
-  \label{tab:seventeen}
-  \begin{tabular}{l r r r @{\qquad} r r @{\qquad} r r}
-    \toprule
-    & \multicolumn{3}{c}{pipeline} & \multicolumn{2}{c}{\tactic, per step}
-    & \multicolumn{2}{c}{\tactic, one term} \\
-    \cmidrule(lr){2-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8}
-    solver & unsat & \carcara & elab. & valid & timeout & valid & timeout \\
-    \midrule
-    \cvcv  & 2\,869 & 2\,868 & 2\,867 & 2\,858 & 1 & 2\,725 & 1 \\
-    \verit & 2\,681 & 2\,598 & 2\,595 & 2\,520 & 3 & 2\,508 & 3 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\paragraph{Per step against one term.} On proofs this size the two shapes are
-nearly indistinguishable --- 2\,725 against 2\,858 for \cvcv, 2\,508 against
-2\,520 for \verit, at the same median cost --- which is the other side of the
-SMT-LIB finding: the one-term shape loses only when the derivation is too large
-to hold at once. Of the one-term failures, 133 (\cvcv) and 12 (\verit) are the
-term-mode premise-type defect this round exposed, since fixed; with it the two
-columns would essentially coincide, and every remaining difference is a proof
-the per-step arm also fails.
-
-\paragraph{Cost.} The proofs are small enough that the checker's median of
-5.0\,s (\cvcv) and 5.1\,s (\verit) is almost entirely the cost of loading the
-library, not of checking: the whole round costs it 4.7 and 5.8 CPU hours,
-against 72.2 and 92.8 hours of solving. \carcara checks and elaborates in a
-median of 0.02\,s and 0.01\,s, for 0.04 and 0.02 CPU hours over the round. The
-few timeouts sit at the top of the size distribution --- 516 elaborated steps
-for \cvcv's one, and 2\,876 to 3\,015 for \verit's three.
+\paragraph{Sledgehammer.} On proofs this size the two shapes are nearly
+indistinguishable --- 2\,725 against 2\,858 for \cvcv, 2\,508 against 2\,520
+for \verit, at the same median cost (Figure~\ref{fig:stepshotsh}) --- which
+is the other side of the SMT-LIB finding: the one-term shape loses only when
+the derivation is too large to hold at once. Of the one-term failures, 133
+(\cvcv) and 12 (\verit) were the term-mode premise-type defect, since fixed;
+with it the two columns essentially coincide, and every remaining difference
+is a proof the per-step arm also fails.
 
 \begin{figure}[t]
   \centering
@@ -660,58 +805,17 @@ for \cvcv's one, and 2\,876 to 3\,015 for \verit's three.
   \label{fig:stepshotsh}
 \end{figure}
 
-\paragraph{How the cost accumulates.} Figure~\ref{fig:cactussh} is the
-cumulative plot of Figure~\ref{fig:cactus} for this corpus, and it looks
-different in an instructive way. Restricted to the proofs each configuration
-validates, solving is cheap --- a median of a third of a second for \cvcv and
-a tenth for \verit --- so the curves are dominated by what comes after it.
-\carcara disposes of all 2\,867 \cvcv proofs in 1.37 CPU hours including the
-solving, and of 2\,595 \verit ones in 1.22; the checker takes 5.82 and 4.97 for
-2\,858 and 2\,520 of them, four times as much for all but a handful fewer.
-The checker's curve is close to a straight line, because on proofs this small
-its cost is the fixed one of loading the library rather than anything about the
-derivation; that is also why the two submission shapes lie on top of each
-other. Within \carcara's whole budget the checker validates the first 1\,059
-(\cvcv) and 963 (\verit).
-
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.72\textwidth]{cactus-seventeen}
-  \caption{Cumulative solving and checking time against the number of
-    Sledgehammer benchmarks whose proof the configuration validated. The
-    \tactic curves are nearly straight, and the two submission shapes coincide.}
-  \label{fig:cactussh}
-\end{figure}
-
-\paragraph{What is left.} The residue is small and, for each solver, of one
-kind. \cvcv leaves nine proofs: eight whose \rulename{bind} step the kernel
-rejects with a type mismatch, and one genuine \rulename{hole}. \verit leaves
-51, of which 47 are \rulename{onepoint}: 37 because the anchor assigns two or
-three variables at once where the reconstructor supports one, and 13 because
-the guard equality sits in a body shape its traversal does not reach (three
-proofs hit both). The remaining four are three \rulename{qnt\_simplify} steps
-with no reconstructor and one \rulename{symm}/\rulename{trans} pair.
-\rulename{onepoint} is therefore the single rule worth generalizing for this
-corpus, and \carcara's own rule fixes the specification: its
-\texttt{extract\_points} traversal descends through negations, quantifiers,
-implications and disjunctions with a polarity, and admits every equality that
-forces a binder. \carcara's \texttt{core} pass also reduces the rule outright,
-which the checker can fall back on: delegating it costs about twice the steps
-on the affected subproof and removes the rule entirely.
-
-\paragraph{What the proofs revealed.} Checking against a second,
-independent reading of the rules paid off in both directions. On the
-producer side: \verit's open named terms, its identity substitutions
-\texttt{(:= (?x S) ?x)} in every \rulename{bind}, its fresh names colliding
-with inner binders, and the eleven proofs whose \rulename{bfun\_elim} the
-core pass silently kept, now logged and reduced. On the checker side: an
-\rulename{onepoint} guard refutation building \lstinline{Or.inl} with an
-application builder that cannot infer the other disjunct, exposed only when
-the cluster reached the \cvcv UF benchmarks; the \texttt{Decidable} instance
-mismatch above; the quadratic construction of batch terms, caught by the
-first batch sweep; the term-mode premise types; and the hoisted definitional
-checks, which cost 49\,s on a \rulename{trans} step whose links all matched
-syntactically. Every finding is now a regression test.
+\paragraph{Native evaluation.} The twelve-logic round ran the per-step shape
+twice, plain and with \texttt{native}, which evaluates the reflective
+normalizers and the decision procedures through compiled code instead of the
+kernel and so puts Lean's compiler in the trusted base. Native validates 23
+more \cvcv proofs (16\,876 against 16\,853) and 9 more \verit ones (15\,343
+against 15\,334), with the same trusted steps; paired per proof, 15\,333
+\verit proofs are validated by both, 10 by native only and one by the
+per-step arm only, and native is faster on nearly every proof both validate.
+The gain is real but small, because the kernel's time is dominated by the
+resolution chains rather than by the normalizers that \texttt{native}
+accelerates; it is the wrong place to spend trust for what it buys.
 
 \begin{thebibliography}{1}
 \bibitem{Barbosa2020}
@@ -728,3 +832,8 @@ and elaborator for SMT proofs in the Alethe format. In: TACAS 2023
 \end{thebibliography}
 
 \end{document}
+
+%%% Local Variables:
+%%% mode: LaTeX
+%%% TeX-master: t
+%%% End:
