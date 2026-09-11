@@ -1,0 +1,8 @@
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-const c0 U)
+(declare-const c1 U)
+(declare-const c2 U)
+(assert (distinct c0 c1 c2))
+(assert (= c0 c2))
+(check-sat)

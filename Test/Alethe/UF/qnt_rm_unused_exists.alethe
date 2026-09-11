@@ -1,0 +1,6 @@
+(assume a0 (exists ((x S) (y S)) (p x)))
+(assume a1 (not (exists ((x S)) (p x))))
+(step t1 (cl (= (exists ((x S) (y S)) (p x)) (exists ((x S)) (p x)))) :rule qnt_rm_unused)
+(step t2 (cl (not (exists ((x S) (y S)) (p x))) (exists ((x S)) (p x))) :rule equiv1 :premises (t1))
+(step t3 (cl (exists ((x S)) (p x))) :rule resolution :premises (t2 a0) :args ((exists ((x S) (y S)) (p x)) true))
+(step t4 (cl) :rule resolution :premises (t3 a1) :args ((exists ((x S)) (p x)) true))

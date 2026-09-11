@@ -225,6 +225,13 @@ theorem qnt_exists_true {α : Sort u} [h : Nonempty α] : (∃ _ : α, True) = T
 theorem qnt_exists_false {α : Sort u} : (∃ _ : α, False) = False :=
   propext ⟨fun h => h.elim fun _ hf => hf, False.elim⟩
 
+/-- Disequality is symmetric, as an equality of propositions. Used to close a `distinct_elim`
+    whose right-hand conjunction keeps the pair order but flips some disequalities' orientation
+    (Carcara's `polyeq` canonicalizes `(= a b)` against `(= b a)`), by congruence on the `∧`-chain
+    rather than the quadratic pairwise conversion. -/
+theorem ne_symm_eq {α : Sort u} (a b : α) : (a ≠ b) = (b ≠ a) :=
+  propext ⟨fun h e => h e.symm, fun h e => h e.symm⟩
+
 /-- `distinct_elim` over three or more Booleans: no three propositions are pairwise distinct. -/
 theorem distinct_bool_false {p q r : Prop} (hpq : p ≠ q) (hpr : p ≠ r) (hqr : q ≠ r) : False :=
   (Classical.em p).elim

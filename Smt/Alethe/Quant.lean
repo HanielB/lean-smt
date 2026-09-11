@@ -537,6 +537,57 @@ def reconstructLet (s : Step) : ReconstructM Expr := do
   | some hc => Meta.mkEqTrans hc h
   | none => pure h
 
+/-- `qnt_rm_unused` over an existential: `(∃ xs, φ) = (∃ ys, φ)` (or `= φ` when every binder is
+    dropped), with `ys ⊆ xs` and `φ` not mentioning the dropped binders. The shared
+    `QUANT_UNUSED_VARS` reconstruction is universal-only — it instantiates each side by *applying*
+    the quantified proposition, which is a function only for `∀` — so the existential case is
+    proved here by `Exists.elim`/`Exists.intro`, filling a dropped binder with an arbitrary
+    inhabitant in the `←` direction. -/
+def reconstructQntRmUnusedExists (s : Step) (lhs rhs : cvc5.Term) : ReconstructM Expr := do
+  let l : Q(Prop) ← reconstructTerm lhs
+  let r : Q(Prop) ← reconstructTerm rhs
+  let xs := lhs[0]!.getChildren
+  -- when a kept binder remains the result is an `∃`; when all are dropped it is the body itself
+  let ys := if rhs.getKind! == .EXISTS then rhs[0]!.getChildren else #[]
+  -- the innermost binder of `v` in `xs`: the one the body's occurrences refer to (a prefix may
+  -- reuse a variable node for a repeated name)
+  let innermost (v : cvc5.Term) : Option Nat := (List.range xs.size).reverse.find? (xs[·]! == v)
+  let arbitrary (v : cvc5.Term) : ReconstructM Expr := do
+    let (u, α) ← reconstructSortLevelAndSort v.getSort!
+    let hα ← Meta.synthInstance (mkApp (mkConst ``Nonempty [u]) α)
+    return mkApp2 (mkConst ``Classical.choice [u]) α hα
+  -- (→): peel the `xs` witnesses, keep the `ys` ones
+  let mp : Q($l → $r) ← Meta.withLocalDeclD `h l fun h => do
+    let elim ← existsTelescope l xs.size fun xfs _ => do
+      let body ← Meta.whnfR (← instExistsBody l xfs)
+      Meta.withLocalDeclD `hb body fun hb => do
+        let ws := ys.map fun y => xfs[(innermost y).getD 0]!
+        Meta.mkLambdaFVars (xfs.push hb) (← existsIntroN r ws hb)
+    Meta.mkLambdaFVars #[h] (← existsElimN h l xs.size elim)
+  -- (←): peel the `ys` witnesses, fill the dropped binders with arbitrary inhabitants. The plan
+  -- for each `xs` position — a `ys` index to keep, or a precomputed inhabitant to drop in — is
+  -- built here, in `ReconstructM`, since `existsTelescope`'s callback runs in `MetaM` and cannot
+  -- reconstruct a sort
+  let plan : Array (Sum Nat Expr) ← xs.mapM fun x => match ys.findIdx? (· == x) with
+    | some k => pure (Sum.inl k)
+    | none => Sum.inr <$> arbitrary x
+  let mpr : Q($r → $l) ← Meta.withLocalDeclD `h r fun h => do
+    let elim ← existsTelescope r ys.size fun yfs _ => do
+      let body ← Meta.whnfR (← instExistsBody r yfs)
+      Meta.withLocalDeclD `hb body fun hb => do
+        let ws := plan.map fun | Sum.inl k => yfs[k]! | Sum.inr e => e
+        Meta.mkLambdaFVars (yfs.push hb) (← existsIntroN l ws hb)
+    Meta.mkLambdaFVars #[h] (← existsElimN h r ys.size elim)
+  addThm q($l = $r) q(propext (Iff.intro $mp $mpr))
+where
+  /-- The body of a nested `∃`/plain prop after supplying witnesses `ws` for its binders. -/
+  instExistsBody (e : Expr) (ws : Array Expr) : MetaM Expr := do
+    let mut cur := e
+    for w in ws do
+      let some (_, p) := cur.app2? ``Exists | throwError "qnt_rm_unused: expected an existential"
+      cur ← Meta.whnfR (mkApp p w)
+    return cur
+
 /-- The quantifier rewrites of `Smt.Reconstruct.Quant`, driven by the result term only. -/
 def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
   match rule with
@@ -592,6 +643,10 @@ def rewriteRule (rule : String) : Option cvc5.ProofRewriteRule :=
   | "sko_ex" => addThm s.concl (← reconstructSko s true)
   | "sko_forall" => addThm s.concl (← reconstructSko s false)
   | "qnt_rm_unused" | "qnt_join" | "miniscope_distribute" | "miniscope_split" | "miniscope_ite" =>
+    -- the shared `QUANT_UNUSED_VARS` reconstruction handles `∀` only; `∃` is proved here
+    if s.rule == "qnt_rm_unused" && s.lits[0]!.getKind! == .EQUAL
+        && s.lits[0]![0]!.getKind! == .EXISTS then
+      return ← addThm s.concl (← reconstructQntRmUnusedExists s s.lits[0]![0]! s.lits[0]![1]!)
     let some rule := rewriteRule s.rule | return none
     let result := s.lits[0]!
     let rw : RewriteStep := { rule, args := #[result], result, premises := #[] }

@@ -151,6 +151,36 @@ partial def transportEq (eqs : Array (Expr × Expr × Expr)) (l r : Expr) : Meta
     Meta.mkCongr (← transportEq eqs f g) (← transportEq eqs x y)
   | _, _ => throwError "cong: cannot align{indentExpr l}\nwith{indentExpr r}"
 
+/-- `l = r` for two conjunctions of disequalities that agree pairwise up to the orientation of
+    each disequality (`x ≠ y` vs `y ≠ x`), by congruence on the `∧`-chain with `ne_symm_eq` at the
+    flipped leaves. `none` when the two are not aligned this way (a genuine reordering), leaving
+    the quadratic pairwise conversion as the fallback. -/
+partial def distinctCongEq (a b : Expr) : MetaM (Option Expr) := do
+  if a == b then return some (← Meta.mkEqRefl a)
+  let pairOf (e : Expr) : Option (Expr × Expr) :=
+    match e.ne? with
+    | some (_, x, y) => some (x, y)
+    | none => match e.not? >>= Expr.eq? with
+      | some (_, x, y) => some (x, y)
+      | none => none
+  let leafEq (x y : Expr) : MetaM (Option Expr) := do
+    if x == y then return some (← Meta.mkEqRefl x)
+    match pairOf x, pairOf y with
+    | some (p, q), some (u, v) =>
+      if p == v && q == u then
+        let α ← Meta.inferType p
+        let lvl ← Meta.getLevel α
+        return some (mkApp3 (mkConst ``ne_symm_eq [lvl]) α p q)
+      return none
+    | _, _ => return none
+  match a.and?, b.and? with
+  | some (la, lb), some (ra, rb) =>
+    let some ha ← leafEq la ra | return none
+    let some hb ← distinctCongEq lb rb | return none
+    return some (← Meta.mkCongr (← Meta.mkCongrArg (mkConst ``And) ha) hb)
+  | none, none => leafEq a b
+  | _, _ => return none
+
 /-- `f(l₁ … lₙ) = f(r₁ … rₙ)` from `hs : lᵢ = rᵢ` for reconstructions that are not applications of
     a function to the arguments (n-ary `distinct`, whose reconstruction is a conjunction of
     pairwise disequalities): transport the changed arguments through that structure. -/
@@ -425,6 +455,13 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       | none => match e.not? >>= Expr.eq? with
         | some (_, a, b) => some (a, b)
         | none => none
+    -- fast path: the two conjunctions have the same pairs in the same positions, differing only
+    -- in the orientation of some disequalities (Carcara's `polyeq` canonicalizes `(= a b)` vs
+    -- `(= b a)`). Prove `le = re` by congruence on the `∧`-chain — O(#pairs) proof nodes — instead
+    -- of the pairwise conversion below, which embeds the whole conjunct list in each `and_elim`
+    -- and so is quadratic in the term (out of memory on the large `distinct`s of ESC-Java proofs).
+    if let some h ← distinctCongEq le re then
+      return ← addThm s.concl h
     let ls ← collectPropsInAndChain le
     let rs ← collectPropsInAndChain re
     let lps := listExpr ls (mkSort .zero)
