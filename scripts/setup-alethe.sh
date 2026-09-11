@@ -4,10 +4,9 @@
 #
 # Usage: scripts/setup-alethe.sh [options]
 #
-#   --no-mathlib          build without Mathlib, by taking lakefile.lean and lake-manifest.json
-#                         from the `no_mathlib` branch and marking them skip-worktree so they are
-#                         never committed (this is what the Alethe work uses; Mathlib is only
-#                         needed for the Real reconstruction and its tests)
+#   --mathlib             build with Mathlib, by restoring this branch's committed lakefile.lean
+#                         and lake-manifest.json (Mathlib is only needed for the Real
+#                         reconstruction and its tests)
 #   --carcara-src DIR     build Carcara from an existing checkout instead of cloning
 #   --carcara-remote URL  clone from this remote          (default $CARCARA_REMOTE, else origin below)
 #   --carcara-ref REF     check out this branch or commit (default $CARCARA_REF, else the
@@ -15,6 +14,10 @@
 #   --skip-lean           do not touch the Lean side
 #   --skip-carcara        do not build Carcara
 #   -h, --help
+#
+# By default the build is without Mathlib: lakefile.lean and lake-manifest.json are taken from
+# the `no_mathlib` branch and marked skip-worktree so they are never committed. This is what the
+# Alethe work uses.
 #
 # On success it prints the line to add to your shell profile so that check-alethe.sh finds
 # Carcara, and runs a smoke test of both of that script's modes.
@@ -24,7 +27,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo"
 
-no_mathlib=false
+mathlib=false
 skip_lean=false
 skip_carcara=false
 carcara_src=""
@@ -34,13 +37,13 @@ prefix="$repo/.lake/alethe"
 
 while [ $# -gt 0 ]; do
   case $1 in
-    --no-mathlib) no_mathlib=true; shift ;;
+    --mathlib) mathlib=true; shift ;;
     --carcara-src) carcara_src=$(cd "$2" && pwd); shift 2 ;;
     --carcara-remote) carcara_remote=$2; shift 2 ;;
     --carcara-ref) carcara_ref=$2; shift 2 ;;
     --skip-lean) skip_lean=true; shift ;;
     --skip-carcara) skip_carcara=true; shift ;;
-    -h|--help) sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 1 ;;
   esac
 done
@@ -65,7 +68,15 @@ EOF
   elan toolchain install "$toolchain" > /dev/null
   echo "using $toolchain"
 
-  if $no_mathlib; then
+  if $mathlib; then
+    say "Mathlib build configuration"
+    for f in lakefile.lean lake-manifest.json; do
+      case $(git ls-files -v "$f") in
+        S*) git update-index --no-skip-worktree "$f"; git checkout -q -- "$f"
+            echo "restored $f from this branch" ;;
+      esac
+    done
+  else
     say "no_mathlib build configuration"
     # the branch lives on the upstream remote; add it if the clone does not have it
     remote=smite

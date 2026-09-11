@@ -90,8 +90,9 @@ import Smt
 `scripts/setup-alethe.sh` installs everything that needs: the Lean toolchain, the
 lean-smt build (and with it the cvc5 parser plugin), and a Carcara binary.
 ```
-scripts/setup-alethe.sh                 # Mathlib build, Carcara cloned and built
-scripts/setup-alethe.sh --no-mathlib    # the configuration the Alethe work uses
+scripts/setup-alethe.sh                 # no-Mathlib build (what the Alethe work uses),
+                                        # Carcara cloned and built
+scripts/setup-alethe.sh --mathlib       # build with Mathlib (needed only for Real and its tests)
 scripts/setup-alethe.sh --carcara-src ~/carcara   # build Carcara from a checkout you have
 ```
 It ends by printing the `CARCARA` line to add to your profile, and by checking a
