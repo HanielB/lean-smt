@@ -350,7 +350,6 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
   | "eq_transitive" => addThm s.concl (← reconstructEqTransitive s)
   | "eq_congruent" => addThm s.concl (← reconstructEqCongruent s false)
   | "eq_congruent_pred" => addThm s.concl (← reconstructEqCongruent s true)
-  | "ac_simp" => addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "refl" | "eq_reflexive" =>
     let (a, b) ← eqSides s.lits[0]!
     if a == b then
@@ -487,9 +486,13 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs lps h)
     let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls rps h)
     addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
-  | "aci_simp" =>
-    -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation);
-    -- other operators (`+`, `*`) and anything the normalizer rejects fall back to AC rewriting.
+  | "ac_simp" | "aci_simp" =>
+    -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation),
+    -- which treats every non-`∧`/`∨` subterm (including arithmetic comparisons) as an opaque
+    -- atom — so it handles `ac_simp` over mixed arithmetic/Boolean terms, which the AC rewriter
+    -- cannot. `ac_simp` is AC-only and `aci_simp` ACI, but both sides of an `ac_simp` step share
+    -- the same atom multiset, so their ACI normal forms still coincide. Anything the normalizer
+    -- rejects (a `+`/`*` top layer) falls back to AC rewriting.
     let some (_, l, r) := s.concl.eq? | addTac s.concl Meta.AC.rewriteUnnormalizedTop
     -- a layer that collapses to one atom (veriT's `(and x)`) reconstructs to the same term on
     -- both sides, and there is no operator left for either normalizer to see
