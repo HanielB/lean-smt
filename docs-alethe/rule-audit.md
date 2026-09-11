@@ -125,21 +125,21 @@ normalizer can exploit — and the structure each combination names — determin
 own which operator (and what a reflective lean-smt checker can do). Carcara already encodes the
 key distinction in `simplification.rs` (`is_assoc`, `is_idempotent`, `identity_of_op`).
 
-| operator | assoc | comm | idempotent (`x∘x=x`) | unit (identity) | annihilator (zero) | self-inverse (`x∘x=unit`) | algebraic structure | simp rule |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|---|---|
-| `and` | ✓ | ✓ | ✓ | `⊤` | `⊥` | ✗ | bounded semilattice | `semilattice_simp` |
-| `or` | ✓ | ✓ | ✓ | `⊥` | `⊤` | ✗ | bounded semilattice | `semilattice_simp` |
-| `bvand` | ✓ | ✓ | ✓ | `~0` (all ones) | `0` | ✗ | bounded semilattice | `semilattice_simp` |
-| `bvor` | ✓ | ✓ | ✓ | `0` | `~0` (all ones) | ✗ | bounded semilattice | `semilattice_simp` |
-| `+` | ✓ | ✓ | ✗ | `0` | — | ✗ (inverse `−x`) | abelian group | `poly_simp` |
-| `bvadd` | ✓ | ✓ | ✗ | `0` | — | ✗ (inverse, mod `2^w`) | abelian group | `poly_simp` |
-| `*` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (ring ×) | `poly_simp` |
-| `bvmul` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (ring ×) | `poly_simp` |
-| `ff.add` | ✓ | ✓ | ✗ | `0` | — | ✓ iff char `p = 2` | abelian group (additive group of `GF(p)`, exponent `p`) | `poly_simp` (mod `p`) |
-| `ff.mul` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (mult. monoid of `GF(p)`) | `poly_simp` (mod `p`) |
-| `bvxor` | ✓ | ✓ | ✗ | `0` | — | ✓ (`x⊕x=0`) | abelian group of exponent 2 (GF(2)) | own BV/GF(2) rule |
-| `concat` (`BvConcat`) | ✓ | ✗ | ✗ | empty (width 0) | — | ✗ | free (non-commutative) monoid | `assoc_simp` |
-| `str.concat` | ✓ | ✗ | ✗ | `""` | — | ✗ | free (non-commutative) monoid | `assoc_simp` |
+| operator              | assoc | comm | idempotent (`x∘x=x`) | unit (identity) | annihilator (zero) | self-inverse (`x∘x=unit`) | algebraic structure                                     | simp rule             |
+|-----------------------|:-----:|:----:|:--------------------:|:---------------:|:------------------:|:-------------------------:|---------------------------------------------------------|-----------------------|
+| `and`                 |   ✓   |  ✓   |          ✓           |       `⊤`       |        `⊥`         |             ✗             | bounded semilattice                                     | `semilattice_simp`    |
+| `or`                  |   ✓   |  ✓   |          ✓           |       `⊥`       |        `⊤`         |             ✗             | bounded semilattice                                     | `semilattice_simp`    |
+| `bvand`               |   ✓   |  ✓   |          ✓           | `~0` (all ones) |        `0`         |             ✗             | bounded semilattice                                     | `semilattice_simp`    |
+| `bvor`                |   ✓   |  ✓   |          ✓           |       `0`       |  `~0` (all ones)   |             ✗             | bounded semilattice                                     | `semilattice_simp`    |
+| `+`                   |   ✓   |  ✓   |          ✗           |       `0`       |         —          |     ✗ (inverse `−x`)      | abelian group                                           | `poly_simp`           |
+| `bvadd`               |   ✓   |  ✓   |          ✗           |       `0`       |         —          |  ✗ (inverse, mod `2^w`)   | abelian group                                           | `poly_simp`           |
+| `*`                   |   ✓   |  ✓   |          ✗           |       `1`       |        `0`         |             ✗             | commutative monoid with zero (ring ×)                   | `poly_simp`           |
+| `bvmul`               |   ✓   |  ✓   |          ✗           |       `1`       |        `0`         |             ✗             | commutative monoid with zero (ring ×)                   | `poly_simp`           |
+| `ff.add`              |   ✓   |  ✓   |          ✗           |       `0`       |         —          |    ✓ iff char `p = 2`     | abelian group (additive group of `GF(p)`, exponent `p`) | `poly_simp` (mod `p`) |
+| `ff.mul`              |   ✓   |  ✓   |          ✗           |       `1`       |        `0`         |             ✗             | commutative monoid with zero (mult. monoid of `GF(p)`)  | `poly_simp` (mod `p`) |
+| `bvxor`               |   ✓   |  ✓   |          ✗           |       `0`       |         —          |        ✓ (`x⊕x=0`)        | abelian group of exponent 2 (GF(2))                     | own BV/GF(2) rule     |
+| `concat` (`BvConcat`) |   ✓   |  ✗   |          ✗           | empty (width 0) |         —          |             ✗             | free (non-commutative) monoid                           | `assoc_simp`          |
+| `str.concat`          |   ✓   |  ✗   |          ✗           |      `""`       |         —          |             ✗             | free (non-commutative) monoid                           | `assoc_simp`          |
 
 The property-combinations, built up from the shared base, name progressively finer structures —
 and each finer structure admits a stronger normal form:
@@ -193,3 +193,64 @@ about `ff.add`:
   twice in the table with two different owners, and the deciding question is whether the operator
   is the canonical ring `+` of its sort (`ff.add` → `poly_simp`) or a bitwise operation that only
   happens to be GF(2)-linear (`bvxor` → its own rule).
+
+### Why `bvxor` is not in `poly_simp`, and where it does belong
+
+It is tempting to fold `bvxor` into `poly_simp` (it is, after all, GF(2)-linear), but it does not
+fit `poly_simp`'s normal form. `poly_simp` normalizes a polynomial over ℤ and, for a bitvector
+term, reduces **mod `2^w`** — i.e. it models the ring **`Z / 2^w`**, which is `bvadd`/`bvmul`
+*with carries*. `bvxor` is a different ring on the *same sort*: **`(Z/2)^w`**, `w` independent bits
+mod 2, **no carry**. So:
+
+- reducing mod `2^w` is the wrong quotient for xor (it needs per-bit mod 2, not whole-value mod
+  `2^w`);
+- to include it, `poly_simp` would have to carry *two* bitvector arithmetics and choose per
+  operator, and — the real hazard — a term mixing a carry op (`bvadd`, `bvmul`) with a no-carry op
+  (`bvxor`) spans *both* rings and has no single polynomial. Reconciling them is bit-level
+  reasoning (bitblasting), not polynomial normalization.
+
+This is exactly why `ff.add` *can* live in `poly_simp` while `bvxor` cannot, even though both are
+GF(2)-additive in characteristic 2: a finite field `GF(p)` carries **one** ring (`poly_simp` mod
+`p` owns its `+`/`*` unambiguously, and for `p=2` the mod-2 coefficient reduction *is* the parity
+normal form), whereas the **bitvector sort carries two incompatible additive structures** —
+`bvadd` (`Z/2^w`, carry) and `bvxor` (`(Z/2)^w`, no carry) — and `poly_simp` fixes one modulus per
+sort. "One ring per sort vs two" is the deciding line.
+
+`bvxor`'s natural normal form is instead the **parity** of its atoms — an atom survives iff it
+occurs an odd number of times (`x ⊕ x = 0` cancels pairs). That is the *same* reflective bitset
+machinery as `semilattice_simp`, with the fold changed from OR to XOR:
+
+| rule | operator law | fold on the leaf bitset | normal form |
+|---|---|---|---|
+| `semilattice_simp` | idempotent (`x∘x=x`) | `Nat.lor` (`\|\|\|`) | set (presence) |
+| xor / involutive rule | self-inverse (`x∘x=unit`) | `Nat.xor` (`^^^`) | parity (odd multiplicity) |
+
+So `bvxor` is a **sibling of `semilattice_simp`**, not of `poly_simp`.
+
+### Could `bvxor` be handled *in* `semilattice_simp`?
+
+Yes and no, and the distinction matters:
+
+- **Mechanically, cheaply — yes.** The whole `AciNorm` scaffold (`Tree`, `reifyLayer`, the
+  `RArray` atom context, `Tree.toExpr`, and the shape of the soundness proof) is reused verbatim.
+  The only changes are: fold with `Nat.xor` instead of `Nat.lor`; a `denoteXor` (`node l r =>
+  Xor (denoteXor l) (denoteXor r)`, `unit => False`); and one soundness lemma `denoteXor_eq`
+  mirroring `denoteOr_eq`. The parity argument (same xor-bits ⇒ same set of odd-multiplicity atoms
+  ⇒ equal xor) is a little more work than the OR/AND `∃`/`∀` arguments — it needs the
+  `x⊕x=False`/`x⊕False=x` cancellation lemmas — but it is the same order of proof (~50–70 lines).
+  For the **Boolean** `xor` this is immediate, since it is `Prop`-valued and reuses the existing
+  `Context = Nat → Prop`; for the **bitvector** `bvxor` the same structure needs a `BitVec`-valued
+  denotation (and bitvectors are not yet in lean-smt's reconstruction scope).
+
+- **As one rule / one normal form — no.** OR (idempotent → keep the bit) and XOR (involutive →
+  toggle the bit) are *different* folds giving *different* normal forms: `(x ∧ x)` collapses to
+  `x`, `(x ⊕ x)` collapses to `0`. A single `bits` cannot do both, so the checker branches on the
+  operator regardless. And the name asserts idempotence, which `bvxor` does not have — putting it
+  under `semilattice_simp` would misname it exactly as `bvmul` would.
+
+So the right shape is a **shared module of reflective bitset normalizers parameterized by the
+fold** — OR for the bounded semilattices, XOR for the involutive (GF(2)) operators, and a plain
+count/multiset for the bare commutative monoids — surfaced as *separate rules* (`semilattice_simp`
+and an involutive/`xor`-parity rule), not a single overloaded one. The code cost of adding the XOR
+sibling is small; the conceptual cost of merging it into `semilattice_simp` is that the name and
+the normal form would both stop being true.
