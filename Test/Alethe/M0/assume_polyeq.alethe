@@ -1,0 +1,5 @@
+(assume a0 (<= x 0/1))
+(assume a1 (= y 0/1))
+(assume a2 (forall ((w Real)) (=> (< w y) (< w 0/1))))
+(assume a3 (not (<= x 0/1)))
+(step t0 (cl) :rule resolution :premises (a0 a3))

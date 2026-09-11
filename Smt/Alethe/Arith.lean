@@ -78,19 +78,6 @@ def isConstant (p : LinComb) : Bool :=
 
 end LinComb
 
-/-- The constant value of a numeral term, if it is one. -/
-partial def constValue? (t : cvc5.Term) : Option Rat :=
-  match t.getKind! with
-  | .CONST_INTEGER => some t.getIntegerValue!
-  | .CONST_RATIONAL => some t.getRationalValue!
-  | .NEG => (- ·) <$> constValue? t[0]!
-  | .TO_REAL => constValue? t[0]!
-  | .DIVISION => do
-    let n ← constValue? t[0]!
-    let d ← constValue? t[1]!
-    if d == 0 then none else some (n / d)
-  | _ => none
-
 /-- The linear combination denoted by an arithmetic term. -/
 partial def linComb (t : cvc5.Term) : LinComb :=
   if let some c := constValue? t then { const := c } else
