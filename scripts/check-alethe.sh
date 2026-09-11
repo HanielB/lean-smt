@@ -51,7 +51,7 @@ if $elaborate; then
   pipeline=(polyeq local core-simp-rare budget)
   core_rules=(ite_simplify eq_simplify not_simplify implies_simplify equiv_simplify bool_simplify
               comp_simplify and_simplify or_simplify prod_simplify sum_simplify minus_simplify
-              unary_minus_simplify div_simplify ac_simp)
+              unary_minus_simplify div_simplify ac_simp aci_simp absorb)
   if ! out=$("$carcara_exe" elaborate --expand-let-bindings --allow-int-real-subtyping \
        --rare-file "$rare_file" --pipeline "${pipeline[@]}" --core-rules "${core_rules[@]}" \
        -- "$alethe" "$smt2" 2>"$tmp/carcara.stderr"); then

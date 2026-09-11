@@ -1,0 +1,8 @@
+(assume a0 (xor p (xor q (xor p r))))
+(assume a1 (not (xor r q)))
+(step t1 (cl (= (xor p (xor q (xor p r))) (xor r q))) :rule boolean_group_simp)
+(step t2 (cl (= (xor p p) false)) :rule boolean_group_simp)
+(step t3 (cl (= (xor p false q) (xor q p))) :rule boolean_group_simp)
+(step t4 (cl (not (xor p (xor q (xor p r)))) (xor r q)) :rule equiv1 :premises (t1))
+(step t5 (cl (xor r q)) :rule resolution :premises (t4 a0) :args ((xor p (xor q (xor p r))) true))
+(step t6 (cl) :rule resolution :premises (t5 a1) :args ((xor r q) true))

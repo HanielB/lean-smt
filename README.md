@@ -120,14 +120,17 @@ carcara elaborate --expand-let-bindings --allow-int-real-subtyping \
 ```
 (`polyeq` and `local` make implicit reasoning explicit and give resolution steps
 their pivots; the `core-simp-rare` pass turns the `*_simplify` rules into chains of
-`rare_rewrite` steps). For veriT proofs, add the legacy rules `qnt_cnf ite_intro
-bfun_elim ac_simp` to `--core-rules`.
+`rare_rewrite` steps, and relabels the legacy AC rules `aci_simp`/`absorb` to the
+structural rules the checker reconstructs — `semilattice_simp` for `and`/`or`,
+`boolean_group_simp` for `xor`, `assoc_simp` for concatenation, `poly_simp` for the
+ring operators — so list `aci_simp absorb` with the `*_simplify` rules). For veriT
+proofs, add the legacy rules `qnt_cnf ite_intro bfun_elim ac_simp` to `--core-rules`.
 
 Checking a large proof is dominated by the kernel replaying the certificates of
 the arithmetic steps: `poly_simp` and `la_generic` normalize polynomials, and by
 default the kernel evaluates that normalization by reduction. Two options trade
-this cost off. `native` runs those normalizations — and the `evaluate` and
-`absorb` steps — as compiled code instead, which is several times faster but
+this cost off. `native` runs those normalizations — and the `evaluate` steps —
+as compiled code instead, which is several times faster but
 puts the Lean compiler in the trusted base. `smt.alethe.jobs` runs that many
 kernel calls concurrently, with `smt.alethe.batch` steps to a call.
 

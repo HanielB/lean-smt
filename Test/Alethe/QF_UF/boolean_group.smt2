@@ -1,0 +1,7 @@
+(set-logic QF_UF)
+(declare-const p Bool)
+(declare-const q Bool)
+(declare-const r Bool)
+(assert (xor p (xor q (xor p r))))
+(assert (not (xor r q)))
+(check-sat)

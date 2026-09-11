@@ -32,7 +32,8 @@ public meta section
 # Equality and rewriting rules
 
 `refl`, `symm`, `trans`, `cong`, their clausal variants, and the term-level rewriting rules
-(`aci_simp`, `evaluate`, `rare_rewrite`), mapped onto `Smt.Reconstruct.UF` and
+(`semilattice_simp`, `boolean_group_simp`, `assoc_simp`, `evaluate`, `rare_rewrite`), mapped onto
+`Smt.Reconstruct.UF` and
 `Smt.Reconstruct.Builtin`.
 -/
 
@@ -486,26 +487,36 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs lps h)
     let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls rps h)
     addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
-  | "ac_simp" | "aci_simp" =>
-    -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation),
-    -- which treats every non-`∧`/`∨` subterm (including arithmetic comparisons) as an opaque
-    -- atom — so it handles `ac_simp` over mixed arithmetic/Boolean terms, which the AC rewriter
-    -- cannot. `ac_simp` is AC-only and `aci_simp` ACI, but both sides of an `ac_simp` step share
-    -- the same atom multiset, so their ACI normal forms still coincide. Anything the normalizer
-    -- rejects (a `+`/`*` top layer) falls back to AC rewriting.
-    let some (_, l, r) := s.concl.eq? | addTac s.concl Meta.AC.rewriteUnnormalizedTop
+  | "semilattice_simp" =>
+    -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation):
+    -- associativity, commutativity, idempotence, the neutral element and the annihilator of the
+    -- connective. Every non-`∧`/`∨` subterm (an arithmetic comparison, a nested opposite
+    -- connective) is an opaque atom; Carcara's core pass decomposes nested layers into one
+    -- `semilattice_simp` per layer lifted by `cong`. The bitvector semilattices (`bvand`,
+    -- `bvor`) are out of the reconstruction's scope.
+    let some (_, l, r) := s.concl.eq? | throwError "semilattice_simp: expected an equality"
     -- a layer that collapses to one atom (veriT's `(and x)`) reconstructs to the same term on
-    -- both sides, and there is no operator left for either normalizer to see
+    -- both sides, and there is no operator left for the normalizer to see
     if ← Meta.isDefEq l r then
       addThm s.concl (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl l) s.concl)
     else if (Prop.AciNorm.topConnective? l r).isSome then
-      try
-        addThm s.concl (← Prop.AciNorm.proveEq l r)
-      catch e =>
-        trace[smt.alethe.step] "aci_simp: AciNorm failed ({e.toMessageData}), falling back to AC"
-        addTac s.concl Meta.AC.rewriteUnnormalizedTop
+      addThm s.concl (← Prop.AciNorm.proveEq l r)
     else
-      addTac s.concl Meta.AC.rewriteUnnormalizedTop
+      throwError "semilattice_simp: neither side is a conjunction or a disjunction:{indentExpr l}\n={indentExpr r}"
+  | "boolean_group_simp" =>
+    -- One `xor` layer normalized by the parity normalizer of `AciNorm` (kernel evaluation):
+    -- associativity, commutativity, the neutral element `false` and `x ⊕ x = false`. `bvxor` is
+    -- out of the reconstruction's scope.
+    let some (_, l, r) := s.concl.eq? | throwError "boolean_group_simp: expected an equality"
+    if ← Meta.isDefEq l r then
+      addThm s.concl (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl l) s.concl)
+    else
+      addThm s.concl (← Prop.AciNorm.proveXorEq l r)
+  | "assoc_simp" =>
+    -- Associativity and the neutral element of a non-commutative operator (`concat`, `str.++`).
+    -- Neither is in the reconstruction's scope; the generic associative rewriter closes whatever
+    -- instance an in-scope operator with an `Std.Associative` instance produces.
+    addTac s.concl Meta.AC.rewriteUnnormalizedTop
   | "evaluate" =>
     let (l, r) ← eqSides s.lits[0]!
     let (u, (α : Q(Sort u))) ← reconstructSortLevelAndSort l.getSort!
@@ -529,14 +540,6 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     match s.args[0]? with
     | some (.str "distinct-false") => reconstructDistinctFalse s
     | _ => reconstructRareRule s
-  | "absorb" =>
-    -- (= (op … z …) z) for the absorbing element z of op (`and`/`false`, `or`/`true`, `*`/`0`)
-    let (l, r) ← eqSides s.lits[0]!
-    let e ← reconstructTerm l
-    let z ← reconstructTerm r
-    let op := e.appFn!.appFn!
-    let tac := if ← useNative then Builtin.nativeAbsorb else Builtin.absorb
-    addTac s.concl (tac · z op)
   | _ => return none
 where
   unNotTerm (t : cvc5.Term) : ReconstructM cvc5.Term := do

@@ -1508,7 +1508,7 @@
 (step t119 (cl @p_697) :rule bind)
 (step t117 (cl (not (! (= (! (forall ((veriT_vr1168 A_tree$)) (or (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))) @p_10)) :named @p_700) @p_698) :named @p_699)) (not @p_700) @p_698) :rule equiv_pos2)
 (anchor :step t116 :args ((veriT_vr1168 A_tree$) (:= (veriT_vr1168 A_tree$) veriT_vr1168)))
-(step t116.t1 (cl (= (or (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))) @p_10) (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))))) :rule aci_simp)
+(step t116.t1 (cl (= (or (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))) @p_10) (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))))) :rule semilattice_simp)
 (step t116 (cl @p_699) :rule bind)
 (step t114 (cl (not (! (= (! (forall ((veriT_vr1168 A_tree$)) (=> (=> (= veriT_vr1168 (node$ (root$ veriT_vr1168) (left$ veriT_vr1168) (right$ veriT_vr1168))) @p_10) @p_10)) :named @p_702) @p_700) :named @p_701)) (not @p_702) @p_700) :rule equiv_pos2)
 (anchor :step t113 :args ((veriT_vr1168 A_tree$) (:= (veriT_vr1168 A_tree$) veriT_vr1168)))

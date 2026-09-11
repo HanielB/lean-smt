@@ -69,7 +69,7 @@
 (step sh1 (cl (! (= @p_29 @p_5) :named @p_30)) :rule rare_rewrite :args ("eq-refl" a))
 (anchor :step t9 :args ((veriT_vr0 U) (veriT_vr1 U) (:= (veriT_vr0 U) veriT_vr0) (:= (veriT_vr1 U) veriT_vr1)))
 (step t9.t2 (cl (= (and (Q veriT_vr0) @p_29 (P veriT_vr0 a veriT_vr1)) (and (Q veriT_vr0) @p_5 (P veriT_vr0 a veriT_vr1)))) :rule cong :premises (sh1))
-(step t9.t3 (cl (= (and (Q veriT_vr0) @p_5 (P veriT_vr0 a veriT_vr1)) (and (Q veriT_vr0) (P veriT_vr0 a veriT_vr1)))) :rule aci_simp)
+(step t9.t3 (cl (= (and (Q veriT_vr0) @p_5 (P veriT_vr0 a veriT_vr1)) (and (Q veriT_vr0) (P veriT_vr0 a veriT_vr1)))) :rule semilattice_simp)
 (step t9.t4 (cl (= (and (Q veriT_vr0) @p_29 (P veriT_vr0 a veriT_vr1)) (and (Q veriT_vr0) (P veriT_vr0 a veriT_vr1)))) :rule trans :premises (t9.t2 t9.t3))
 (step t9 (cl @p_27) :rule bind)
 (step t7 (cl (not (! (= (! (exists ((x U) (z U)) (and (Q x) @p_29 (P x a z))) :named @p_32) @p_28) :named @p_31)) (not @p_32) @p_28) :rule equiv_pos2)

@@ -206,3 +206,14 @@ move when n is large and the used pairs are few — the analogue of cvc5's lazy 
 It is more invasive (it rewrites the elaboration of the projection chain, not just one step) and
 was not needed once the congruence fix removed the blow-up, so it is left as the next step if a
 proof ever *uses* Θ(n²) of the pairs.
+
+## 8. Name the AC rules by the operator's structure — done (Carcara `131f9a1f`)
+
+`aci_simp` covered a hierarchy (semilattices, exponent-two groups, free monoids, rings) under one
+normal form, with `absorb` for the annihilator on the side, and lean-smt had three different
+reconstructions behind it. The rules are now `semilattice_simp`, `boolean_group_simp`,
+`assoc_simp` and `poly_simp`, each with exactly its operators' normal form, and the core pass
+relabels the legacy names (see `rule-audit.md`, "The structural AC rules"). For the kernel the
+gain is that every `and`/`or`/`xor` layer, annihilator included, is now one reflective
+evaluation, where the AC rewriter had been building rewrite chains — and the nested cases the
+single-layer normalizer cannot see are decomposed by Carcara into per-layer structural steps.

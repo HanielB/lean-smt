@@ -115,7 +115,7 @@ fixed (regression tests noted), and the `evaluate` residual is characterized.
 | `qnt_rm_unused` over `∃` | the shared `QUANT_UNUSED_VARS` reconstruction is universal-only (it *applies* the quantified proposition, valid only for `∀`), so an existential rewrite hit `(kernel) function expected` | new `∃` handler in `Smt/Alethe/Quant.lean` via `Exists.elim`/`Exists.intro`, filling dropped binders with arbitrary inhabitants | `Test/Alethe/UF/qnt_rm_unused_exists` |
 | `distinct_elim` | the pairwise conversion (used when the RHS orientation differs from the native `distinct` reconstruction, as `polyeq` causes) embeds the whole conjunct list in each of `n²` `and_elim`s — an O(n⁴) term that exhausts kernel memory on ESC-Java's large distincts | prove the equality by congruence on the `∧`-chain with `ne_symm_eq` at flipped leaves — O(n); the refl fast path already handled matching order | `Test/Alethe/QF_UF/distinct_flip`; see `elaboration-opportunities.md` §7 |
 | `evaluate` (cvc5, 2 QF_IDL proofs) | `evaluate: not decidable and no atom to split on` on ~25 steps each of two Averest bounded-model-checking proofs (`BinarySearch_safe_bgmc002`, `Partition_safe_bgmc003`) | fixed — the term is a *ground* Boolean formula containing equalities **between propositions** (`(= (or …) (and …))`, all leaves `true`/`false`); `=` on `Prop` has no computable `DecidableEq`, so the instance is classical and `decide` cannot run, yet there is no opaque atom to split. New `decideGround` rewrites propositional `=` to `↔` (`eq_iff_iff`) and lets `simp` evaluate the ground formula. `BinarySearch_safe_bgmc002` goes from 27 evaluate holes to 0. | `Test/Alethe/QF_UF/evaluate_ground` |
-| `ac_simp` (cvc5, QF_IDL) | newly surfaced on the same proofs (15 steps in `BinarySearch_safe_bgmc002`): a **nested mixed `∧`/`∨`** conjunction that also contains the absorbing element `false`, e.g. `(and (not (>= (+ F22 (* -1 F22)) 0)) false (not (or …)))`. lean-smt's `ac_simp` went straight to `Meta.AC.rewriteUnnormalizedTop`, which cannot normalize the mixed nesting (`[ac_rfl_top]`). | fixed two ways. (1) `ac_simp` now shares the reflective `AciNorm` path with `aci_simp`, so simple single-layer Boolean `ac_simp` is reflective (it was AC-rewrite before) — `AciNorm` treats every non-`∧`/`∨` subterm as an opaque atom. (2) These QF_IDL steps still exceed `AciNorm` (it flattens one connective layer only, and models the *neutral* element but not the *absorbing* one, and treats a nested opposite-connective as an atom), so `ac_simp` was also added to the core-rule lists (cvc5's `run-arms.sh`, `check-alethe.sh`, the `alethe`-tactic default) — it was previously only in the veriT-only `LEGACY` set. Carcara then reduces all 45 of `BinarySearch`'s `ac_simp` to Boolean core rules and the proof checks fully valid (trusted 0). A fully reflective solution would need a multi-layer, absorbing-aware normalizer. | — (corpus proof) |
+| `ac_simp` (cvc5, QF_IDL) | newly surfaced on the same proofs (15 steps in `BinarySearch_safe_bgmc002`): a **nested mixed `∧`/`∨`** conjunction that also contains the absorbing element `false`, e.g. `(and (not (>= (+ F22 (* -1 F22)) 0)) false (not (or …)))`. | fixed on both sides, and the rule vocabulary reorganized (see the next section). Carcara's core pass decomposes nested `ac_simp` into one structural step per layer lifted by `cong`; lean-smt's reflective `AciNorm` now models the annihilator (`Tree.absorb`, `bits : Tree → Option Nat`), so the single-layer absorbing cases are kernel-evaluated; `ac_simp` is listed with the core rules for both solvers (it was in the veriT-only `LEGACY` set). `BinarySearch_safe_bgmc002` checks fully valid (trusted 0). |
 
 ## Algebra of the AC-simplification rules (`ac_simp`/`aci_simp`/`absorb` vs `poly_simp`)
 
@@ -254,3 +254,26 @@ count/multiset for the bare commutative monoids — surfaced as *separate rules*
 and an involutive/`xor`-parity rule), not a single overloaded one. The code cost of adding the XOR
 sibling is small; the conceptual cost of merging it into `semilattice_simp` is that the name and
 the normal form would both stop being true.
+
+## The structural AC rules (implemented, 2026-09-11)
+
+Following the algebra above, `aci_simp`/`absorb` were split into rules named by the structure of
+the operator, in Carcara (`131f9a1f`) and lean-smt:
+
+| rule | operators | laws | Carcara checker | lean-smt reconstruction |
+|---|---|---|---|---|
+| `semilattice_simp` | `and or bvand bvor` | assoc, comm, idempotent, unit, **annihilator** | set normal form, collapsing to the annihilator when it occurs (`absorb` folded in) | reflective `AciNorm` (bitset `Nat.lor`; `Tree.absorb`, `bits : Tree → Option Nat`, `denoteAnd_eq`/`denoteOr_eq` over the `Option`); `bvand`/`bvor` out of scope |
+| `boolean_group_simp` | `xor bvxor` | assoc, comm, unit, `x ⊕ x = unit` | parity normal form (odd multiplicity) | reflective parity normalizer: the bitset folded with `Nat.xor`, soundness through `parity ctx m n` over the bit positions (`denoteXor_eq`); `bvxor` out of scope |
+| `assoc_simp` | `concat str.++` | assoc, unit | sequence normal form | generic associative rewriter (`Meta.AC.rewriteUnnormalizedTop`); no in-scope operator |
+| `poly_simp` | `+ * bvadd bvmul` (and the finite-field `ff.add`/`ff.mul`) | commutative ring | existing polynomial normal form (mod `2^w`, mod `p`) | existing reflective polynomial normalizer |
+
+Carcara's core pass **translates** the legacy names: `aci_simp` and `absorb` are relabeled to the
+structural rule of their top operator (after that rule's checker accepts the conclusion), and the
+per-layer steps of the `ac_simp` decomposition, `shuffle` and `nary_elim` are emitted as structural
+rules, so no legacy AC name survives the pass. The legacy checkers stay for proofs checked without
+elaboration. lean-smt reconstructs **only** `poly_simp` and the three structural rules; the
+`ac_simp`/`aci_simp`/`absorb` handlers are gone, and the core-rule lists (`check-alethe.sh`, the
+`alethe` tactic, the runners) list `ac_simp aci_simp absorb` for the translation. The eight test
+proofs that carried `aci_simp` steps were relabeled to `semilattice_simp` and re-validated with
+Carcara; `Test/Alethe/QF_UF/{semilattice_absorb,boolean_group}` exercise the annihilator and the
+parity normal form.

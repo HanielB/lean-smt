@@ -4,7 +4,7 @@
 (step t6 (cl (= @p_6 (! true :named @p_8))) :rule rare_rewrite :args ("eq-refl" a))
 (step t7 (cl (= @p_7 @p_8)) :rule rare_rewrite :args ("eq-refl" b))
 (step t8 (cl (= @p_5 (! (and @p_8 @p_8) :named @p_9))) :rule cong :premises (t6 t7))
-(step t9 (cl (= @p_9 @p_8)) :rule aci_simp)
+(step t9 (cl (= @p_9 @p_8)) :rule semilattice_simp)
 (step t10 (cl (= @p_5 @p_8)) :rule trans :premises (t8 t9))
 (step t11 (cl (= @p_4 (! (=> @p_8 @p_2) :named @p_10))) :rule cong :premises (t10))
 (step t12 (cl (= @p_10 @p_2)) :rule rare_rewrite :args ("bool-impl-true2" @p_2))
