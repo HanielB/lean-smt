@@ -135,6 +135,8 @@ key distinction in `simplification.rs` (`is_assoc`, `is_idempotent`, `identity_o
 | `bvadd` | ✓ | ✓ | ✗ | `0` | — | ✗ (inverse, mod `2^w`) | abelian group | `poly_simp` |
 | `*` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (ring ×) | `poly_simp` |
 | `bvmul` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (ring ×) | `poly_simp` |
+| `ff.add` | ✓ | ✓ | ✗ | `0` | — | ✓ iff char `p = 2` | abelian group (additive group of `GF(p)`, exponent `p`) | `poly_simp` (mod `p`) |
+| `ff.mul` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (mult. monoid of `GF(p)`) | `poly_simp` (mod `p`) |
 | `bvxor` | ✓ | ✓ | ✗ | `0` | — | ✓ (`x⊕x=0`) | abelian group of exponent 2 (GF(2)) | own BV/GF(2) rule |
 | `concat` (`BvConcat`) | ✓ | ✗ | ✗ | empty (width 0) | — | ✗ | free (non-commutative) monoid | `assoc_simp` |
 | `str.concat` | ✓ | ✗ | ✗ | `""` | — | ✗ | free (non-commutative) monoid | `assoc_simp` |
@@ -174,3 +176,20 @@ Consequences for naming and ownership:
 - The absorbing element is a per-operator constant like the unit: adding it to the semilattice
   normalizer is a `absorbing_of_op` lookup gated exactly like `identity_of_op`, not a new law to
   thread through every operator.
+
+Finite fields (`ff.add`, `ff.mul` over `GF(p)`, coming to cvc5) slot into the ring tier: they are
+the addition and multiplication of a field, so `poly_simp` with reduction mod `p` subsumes them —
+the same mechanism it already uses for the bitvector operators mod `2^w`. Two subtleties, both
+about `ff.add`:
+
+- The additive group of `GF(p)` has exponent equal to the field **characteristic** `p`: for odd
+  `p`, `x + x = 2x ≠ 0` (not self-inverse); for `p = 2` it *is* self-inverse (`x + x = 0`), so over
+  `GF(2^k)` `ff.add` is structurally an exponent-2 abelian group — the same structure as `bvxor`.
+- Despite that, `ff.add` still belongs to `poly_simp`, not to a separate GF(2) rule, because it is
+  the *ring's* addition: `poly_simp`'s mod-`p` reduction covers every characteristic, and the
+  self-inverse law of the char-2 case falls out of reducing mod 2. `bvxor` stays separate only
+  because in the bitvector theory it is a bitwise operator distinct from that theory's ring
+  addition `bvadd` (`Z / 2^w`), whereas `ff.add` *is* its field's `+`. So "GF(2)-addition" appears
+  twice in the table with two different owners, and the deciding question is whether the operator
+  is the canonical ring `+` of its sort (`ff.add` → `poly_simp`) or a bitwise operation that only
+  happens to be GF(2)-linear (`bvxor` → its own rule).

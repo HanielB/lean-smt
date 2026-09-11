@@ -438,3 +438,41 @@ Done — the algebra table is in `docs-alethe/rule-audit.md` (section "Algebra o
 One thing to flag: **`docs-alethe/` is gitignored** in this repo (`.gitignore` line 6, `/docs-alethe`), so the doc is updated on disk but not version-controlled — and, as it turns out, my earlier "docs" commits this session only committed the code files (the `docs-alethe/…` paths were silently skipped by `git add`). The tracked, committed work is all the code (`Smt/…`, `Test/…`, `scripts/…`); the audit and elaboration-opportunities notes live on disk only.
 
 If you'd like the audit docs tracked, I can either `git add -f docs-alethe/rule-audit.md` (force past the ignore) or move them somewhere not ignored — your call. Otherwise they stay as local working notes, consistent with how the repo is currently set up.
+
+## Turn: 2026-09-11 16:30:05 (session b00f5c7c)
+
+Done — `~/lean/lean-smt` is now on `alethe-dev`, and nothing in your working tree was touched in the process.
+
+What I did, in order:
+
+1. Restored `CLAUDE-conversation-2026-09-10.md` to its full 586 lines. The earlier switch back to `alethe` had dropped the last 28 (they were only in the `alethe-dev` commit).
+2. `git checkout -B alethe-dev alethe` — since HEAD was already at `alethe`'s tip, this only repointed the branch; the working tree, including files being edited right now, stayed as-is.
+3. Removed the four ignore lines from `.gitignore` and committed the dev material as `402afc7`: `docs-alethe/`, all five conversation logs, `ALETHE-PLAN.md`.
+4. Force-pushed: `030169d...402afc7 alethe-dev`.
+
+So `alethe-dev` is now exactly `alethe` (`7e634c6`, rewritten) plus one commit — they share history, so merges and rebases between them behave. Old refs kept locally: `alethe-pre-rewrite` (`3928766`) and tag `alethe-dev-old` (`030169d`).
+
+One thing worth knowing: `docs-alethe/rule-audit.md` gained 58 lines at 16:26, during this session — a section on the algebra of the AC-simplification rules. Something else is writing in this repo (another session, or you). It's committed in `402afc7` now, but a parallel writer means switching branches here is not free.
+
+Which leads to the one hazard: **don't run `git checkout alethe` in this directory.** `docs-alethe/` and the logs are tracked here and absent there, so git would delete them from disk, and any uncommitted edits would go with them. Use a second worktree instead:
+
+```
+git worktree add ~/lean/lean-smt-code alethe
+```
+
+Then code work happens here on `alethe-dev`, and when you want it on the clean branch, cherry-pick the code commits over in `~/lean/lean-smt-code` and push from there. Want me to set that worktree up?
+
+## Turn: 2026-09-11 16:38:19 (session 315b089e)
+
+Added. The two finite-field operators are in the table:
+
+| operator | assoc | comm | idempotent | unit | annihilator | self-inverse | structure | rule |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|---|---|
+| `ff.add` | ✓ | ✓ | ✗ | `0` | — | ✓ iff char `p=2` | abelian group (additive group of `GF(p)`, exponent `p`) | `poly_simp` (mod `p`) |
+| `ff.mul` | ✓ | ✓ | ✗ | `1` | `0` | ✗ | commutative monoid with zero (mult. monoid of `GF(p)`) | `poly_simp` (mod `p`) |
+
+They land in the **ring tier** with `+ * bvadd bvmul` — `poly_simp` with reduction mod `p` subsumes them, mirroring the mod-`2^w` handling of the bitvector ops. So finite fields don't add a new simp-rule owner; they extend `poly_simp`'s reach.
+
+The one conceptual wrinkle I wrote up in the note: **`ff.add`'s self-inverse property is characteristic-dependent.** Its additive group has exponent = the field characteristic `p`, so for odd `p` it's not self-inverse, but for `p = 2` (i.e. `GF(2^k)`) `x + x = 0` — structurally the *same* exponent-2 abelian group as `bvxor`. Yet they get different owners: `ff.add` stays with `poly_simp` because it's the field's *ring* addition (mod-`p` reduction covers every characteristic, and the char-2 self-inverse law just falls out of reducing mod 2), whereas `bvxor` needs its own rule because in the bitvector theory it's a *bitwise* operator distinct from that theory's ring addition `bvadd` (`Z/2^w`). So "GF(2)-addition" appears twice in the table with two owners, and the deciding question is: *is the operator the canonical ring `+` of its sort, or a bitwise op that merely happens to be GF(2)-linear?*
+
+(Still on disk only — `docs-alethe/` remains gitignored, so this isn't committed unless you want me to `git add -f` it.)
