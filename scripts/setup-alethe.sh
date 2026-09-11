@@ -78,19 +78,16 @@ EOF
     done
   else
     say "no_mathlib build configuration"
-    # the branch lives on the upstream remote; add it if the clone does not have it
-    remote=smite
-    git remote get-url $remote > /dev/null 2>&1 \
-      || remote=$(git remote | grep -m1 . || true)
-    git ls-remote --heads "$remote" no_mathlib | grep -q no_mathlib \
-      || { echo "error: no \`no_mathlib\` branch on remote '$remote'" >&2; exit 1; }
-    git fetch -q "$remote" no_mathlib
+    # the branch lives upstream; fetch it by URL so the clone's remotes are left alone
+    upstream=https://github.com/ufmg-smite/lean-smt.git
+    git fetch -q "$upstream" no_mathlib \
+      || { echo "error: could not fetch the \`no_mathlib\` branch from $upstream" >&2; exit 1; }
     for f in lakefile.lean lake-manifest.json; do
       git show FETCH_HEAD:$f > "$f"
       # never commit these: they differ from the branch only in the build configuration
       git update-index --skip-worktree "$f"
     done
-    echo "lakefile.lean and lake-manifest.json taken from $remote/no_mathlib, marked skip-worktree"
+    echo "lakefile.lean and lake-manifest.json taken from the upstream no_mathlib branch, marked skip-worktree"
   fi
 
   say "building lean-smt (this fetches the dependencies and a prebuilt cvc5)"

@@ -9,6 +9,10 @@
 # $CARCARA, or `carcara` in the PATH.
 #
 # The trailing words are the `#check_alethe` options (see README.md).
+#
+# The wall-clock time is reported at the end, as a `time:` line on stderr, split between the
+# Carcara elaboration (with --elaborate) and the Lean check (which includes starting Lean and
+# importing Smt).
 
 set -euo pipefail
 
@@ -45,8 +49,13 @@ fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
+now() { printf '%s' "$EPOCHREALTIME"; }
+secs() { awk -v a="$1" -v b="$2" 'BEGIN { printf "%.3fs", b - a }'; }
+
+carcara_time=""
 if $elaborate; then
   carcara_exe="${CARCARA:-carcara}"
+  t0=$(now)
   rare_file="$repo_root/Smt/Alethe/Rare/rewrites.eo"
   pipeline=(polyeq local core-simp-rare budget)
   core_rules=(ite_simplify eq_simplify not_simplify implies_simplify equiv_simplify bool_simplify
@@ -65,6 +74,7 @@ if $elaborate; then
     cat "$tmp/carcara.stderr" >&2
     exit 1
   fi
+  carcara_time=$(secs "$t0" "$(now)")
   alethe="$tmp/elaborated.alethe"
   printf '%s\n' "${out#*$'\n'}" > "$alethe"
 fi
@@ -77,4 +87,14 @@ import Smt
 EOF
 
 cd "$repo_root"
-exec lake env lean --plugin="$plugin" "$lean_file"
+t0=$(now)
+status=0
+lake env lean --plugin="$plugin" "$lean_file" || status=$?
+lean_time=$(secs "$t0" "$(now)")
+
+if [ -n "$carcara_time" ]; then
+  echo "time: carcara ${carcara_time}, lean ${lean_time}" >&2
+else
+  echo "time: lean ${lean_time}" >&2
+fi
+exit $status
