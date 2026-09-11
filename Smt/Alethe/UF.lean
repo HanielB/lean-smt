@@ -515,7 +515,10 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       -- an uninterpreted Boolean symbol in the term makes the instance classical, so `decide`
       -- cannot run; the equality holds for either truth value of such an atom, so split
       let atoms ← opaqueAtoms q($t = $t') #[]
-      if atoms.isEmpty then throwError "evaluate: not decidable and no atom to split on"
+      if atoms.isEmpty then
+        -- no opaque atom: a ground Boolean formula whose only non-computable part is `=` between
+        -- propositions. Rewrite those to `↔` and evaluate.
+        return some (← addTac q($t = $t') decideGround)
       if atoms.size > 8 then throwError "evaluate: {atoms.size} opaque Boolean atoms"
       return some (← addTac q($t = $t') fun mv => proveByCases mv atoms.toList #[])
     addThm q($t = $t') (← decideProofOfNative q($t = $t') hp)

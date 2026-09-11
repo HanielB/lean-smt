@@ -100,6 +100,20 @@ partial def proveByCases (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) :
       Meta.mkLambdaFVars #[hnb] (← instantiateMVars m)
     mv.assign (← Meta.mkAppM ``Or.elim #[em, pos, neg])
 
+/-- Close a goal `t = t'` where both sides are *ground* Boolean formulas — built from `true`,
+    `false`, the propositional connectives, and equalities *between propositions* — by rewriting
+    every propositional `=` to `↔` (`eq_iff_iff`) and letting `simp` evaluate the result. `decide`
+    cannot do this directly: `=` on `Prop` has no computable `DecidableEq`, so the synthesized
+    instance is classical, yet there is no opaque atom to case-split on. This is `evaluate` on the
+    Boolean encodings of `ite`/comparison cascades that cvc5 produces for QF_IDL. -/
+def decideGround (mv : MVarId) : MetaM Unit := do
+  let mut thms ← Meta.getSimpTheorems
+  if (← getEnv).contains ``eq_iff_iff then thms ← thms.addConst ``eq_iff_iff
+  let ctx ← Meta.Simp.mkContext {} #[thms] (← Meta.getSimpCongrTheorems)
+  let (r, _) ← Meta.simpGoal mv ctx #[← Meta.Simp.getSimprocs]
+  if let some (_, mv') := r then
+    throwError "evaluate: could not decide the ground formula:{indentExpr (← mv'.getType)}"
+
 /-- A previously checked step (or an assumption), as seen by later steps. -/
 structure Premise where
   id : String

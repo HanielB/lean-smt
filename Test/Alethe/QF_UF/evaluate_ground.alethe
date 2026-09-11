@@ -1,0 +1,6 @@
+(assume a0 (not (= (or true false) (and true true))))
+(step t1 (cl (= (= (or true false) (and true true)) true)) :rule evaluate)
+(step t2 (cl (= (or true false) (and true true)) (not true)) :rule equiv2 :premises (t1))
+(step t3 (cl true) :rule true)
+(step t4 (cl (= (or true false) (and true true))) :rule resolution :premises (t2 t3) :args (true false))
+(step t5 (cl) :rule resolution :premises (t4 a0) :args ((= (or true false) (and true true)) true))
