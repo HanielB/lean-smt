@@ -1315,3 +1315,38 @@ premise fix.
 
 Report and `elaboration-opportunities.md` §9 corrected to 198-of-199 with the holdout described;
 PDF rebuilt (21 pages).
+
+## Turn: 2026-09-12 09:10 (session 315b089e) — split the native section out; ac_simp falls back to a common normal form
+
+**The split.** `2e5f53a` had swept in a pre-existing uncommitted `\section{The native Variant}`
+alongside the ac_simp pin. History rebuilt as `46303a4` (the native section plus the four figures
+it refers to, which had been untracked), then the two ac_simp commits at their original
+intermediate states. Verified byte-identical: `git diff f530e74 HEAD` over the tex, the docs, the
+pin and the log is empty, the PDF differing only in its build-id bytes. Session `0c7d535f`
+committed `f627a9b` in the middle of the sequence; the two touch disjoint files and did not
+collide.
+
+**The holdout, fixed** (Carcara `cac6af13`). `13e721d7` gated the meet-in-the-middle route on the
+step having premises, on the grounds that without them the structural reading — the right-hand
+side *is* the normal form of the left — is what `ac_simp` means. veriT disagrees in practice: it
+emits premise-free conclusions that are simply under-flattened, a nested `(and (and a b) c)` left
+alone deep inside the term. The gate is gone, so normalizing both sides to a common form is the
+fallback for every `ac_simp`, and the rule now reads as "the two sides are equal modulo flattening
+and idempotence" — sound, and what the elaborator had always computed.
+
+Two suite cases pinned the stricter reading and flip to accepting (the under-flattened `=`, and a
+right-hand side that keeps a duplicate); each gained a sharper negative alongside it, so the rule
+still rejects sides that differ *up to* the normal form. New elaboration test
+`ac_simp_under_flattened_conclusion` pins that the shape decomposes into per-layer
+`semilattice_simp` glued by `cong`/`trans` with no `ac_simp` left — and `run_core_pass` checks its
+result in **elaborated** granularity, which is the property that matters for the consumer.
+
+Suite: 411 passing. Regression: the 40-benchmark differential (501 premise-bearing `ac_simp`
+steps) re-run against the ungated binary, 40/40 `valid` → `valid`, identical to the previous run.
+On the real holdout `QF_UFIDL/uclid/elf.rf10.smt2`: `check` valid, `elaborate` valid with **zero**
+`ac_simp` and 3 056 `semilattice_simp` in a 27 MB output. Its *elaborated-granularity* check OOMs
+at a 16 GB cap — a scale limit of that 90 k-step proof, not something this change introduced, and
+I did not push the cap higher on a 30 GB box.
+
+Pushed `f1253e4c..cac6af13`; pin bumped `13e721d7` → `cac6af13`. A definitive re-run of all 199
+with the fallback binary is in flight to confirm 190 valid + 9 holey.

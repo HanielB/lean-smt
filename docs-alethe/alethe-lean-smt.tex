@@ -566,19 +566,20 @@ neither an elaborated proof nor a verdict. The elaborator had carried a
 premise-aware decomposition all along, reached only for the steps whose
 premises are redundant, which is why the 11\,k proofs that use
 \rulename{ac\_simp} were otherwise unaffected. The checker now reads the
-premises as sub-rewrites and mirrors those two routes; a premise-free instance
-keeps its strict structural reading. Of the affected proofs --- 175 QF\_UFIDL
-(\texttt{pete2}, \texttt{pete}, \texttt{uclid}) and 24 QF\_LIA --- 198 now
-check: 189 \emph{valid} and 9 \emph{holey}, the latter QF\_LIA
-\texttt{calypto} proofs holey only for their \rulename{lia\_generic} steps.
-The step is decomposed into \rulename{cong}, \rulename{trans} and
-\rulename{semilattice\_simp}, which the checker already reconstructs, so no
-lean-smt change was needed. The single proof still rejected fails on a
-\emph{premise-free} \rulename{ac\_simp} whose conclusion \verit left
-under-flattened --- \texttt{(and (and A B) C)} eight levels down, where the
-normal form is \texttt{(and A B C)}. The equality holds, so reading the rule
-up to a common normal form would accept it, but that is the relaxation the
-premise-free case deliberately does not make. The identifiable remainder is 24
+premises as sub-rewrites and mirrors the elaborator's two routes: the
+structural reading first, and, failing that, normalizing both sides to a
+common form. That second route is the general fallback, and it is needed for more than the premises: \verit
+also writes \emph{premise-free} conclusions that are simply under-flattened,
+a nested \texttt{(and (and A B) C)} left alone deep inside a term whose normal
+form is \texttt{(and A B C)}. Reading the rule as ``the two sides are equal
+modulo flattening and idempotence'' accepts both shapes, is sound, and is what
+the elaborator had always computed; the elaborator decomposes either into
+per-layer \rulename{semilattice\_simp} steps glued by \rulename{cong} and
+\rulename{trans}, which the checker already reconstructs, so no lean-smt
+change was needed. All 199 affected proofs --- 175 QF\_UFIDL (\texttt{pete2},
+\texttt{pete}, \texttt{uclid}) and 24 QF\_LIA --- now check: 190
+\emph{valid} and 9 \emph{holey}, the latter QF\_LIA \texttt{calypto} proofs
+holey only for their \rulename{lia\_generic} steps. The identifiable remainder is 24
 \rulename{and\_simplify}, whose singleton \texttt{and} is a \verit-side
 issue.
 
