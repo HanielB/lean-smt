@@ -1348,5 +1348,8 @@ On the real holdout `QF_UFIDL/uclid/elf.rf10.smt2`: `check` valid, `elaborate` v
 at a 16 GB cap — a scale limit of that 90 k-step proof, not something this change introduced, and
 I did not push the cap higher on a 30 GB box.
 
-Pushed `f1253e4c..cac6af13`; pin bumped `13e721d7` → `cac6af13`. A definitive re-run of all 199
-with the fallback binary is in flight to confirm 190 valid + 9 holey.
+Pushed `f1253e4c..cac6af13`; pin bumped `13e721d7` → `cac6af13`. The definitive re-run of all 199
+against the fallback binary confirms it exactly: **190 `invalid` → `valid`, 9 `invalid` →
+`holey`, nothing left failing**. The 9 are QF_LIA `calypto`, holey only for their `lia_generic`
+steps — veriT's oracle rule, which carries no certificate and which Carcara does not check
+either. So every proof the two `ac_simp` defects were losing is recovered.
