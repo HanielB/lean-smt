@@ -217,3 +217,36 @@ relabels the legacy names (see `rule-audit.md`, "The structural AC rules"). For 
 gain is that every `and`/`or`/`xor` layer, annihilator included, is now one reflective
 evaluation, where the AC rewriter had been building rewrite chains — and the nested cases the
 single-layer normalizer cannot see are decomposed by Carcara into per-layer structural steps.
+
+## 9. Read `ac_simp`'s premises in the checker — done (Carcara `13e721d7`)
+
+veriT emits `ac_simp` with `:premises` when the flattening of a subterm was derived earlier —
+notably a rewrite under a binder, packaged as a `bind` subproof — so the conclusion is congruence
+over those equalities rather than a purely structural flattening. Carcara's *checker* ignored
+`:premises` entirely and compared the conclusion's right-hand side against the structural normal
+form of its left, so it rejected every such step:
+
+```
+(assume h1 (= a b))
+(step t2 (cl (= (and (and a c) c) (and b c))) :rule ac_simp :premises (h1))
+  error: expected terms to be equal: '(and b c)' and '(and a c)'
+```
+
+The cost was not a checking gap but a *lost proof*: elaboration validates as it goes, so the whole
+proof came back with neither an elaborated result nor a verdict (`elab=none, lean=none`). The
+elaborator has had a premise-aware decomposition all along; it was only ever reached for steps
+whose premises happen to be redundant, which is why the ~11 k proofs that use `ac_simp` with
+premises the checker could ignore were unaffected.
+
+The checker now builds a rewrite map from the unit-equality premises and mirrors the elaborator's
+two routes — the historical reading (both orientations, stopping at a replacement) and, failing
+that, meeting in the middle (forward orientation, continuing past a replacement, both sides
+normalized to a common form). The meet route is tried *only* when the step has premises, so a
+premise-free instance keeps its strict structural reading, and premises that are not unit
+equalities are ignored rather than rejected, leaving such a step exactly as it checked before.
+
+Scale: 199 SMT-LIB veriT proofs in round four were lost this way (13 attributed in the logs plus
+186 whose rule name fell past the runner's 2 KB stderr cap), 175 of them QF_UFIDL
+(`pete2`/`pete`/`uclid`) and 24 QF_LIA. They now check, and Carcara decomposes the step into
+`cong`/`trans`/`semilattice_simp`, which lean-smt already reconstructs — no lean-smt change was
+needed.

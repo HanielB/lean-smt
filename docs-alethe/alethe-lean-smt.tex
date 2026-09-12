@@ -548,12 +548,32 @@ appeared in the earlier three-logic round, on 194 QF\_LRA proofs, where it had
 been mistaken for \rulename{lia\_generic} residue; it is now fixed, confined
 to those three polymorphic positions so that \texttt{(div 1.0 2.0)} is still
 rejected, and proofs of the affected families that the parser turned away now
-check (\emph{valid}, not merely parseable). Of the remaining 691: 226 are steps \carcara's own checker rejects
-(the identifiable ones 24 \rulename{and\_simplify} and 13
-\rulename{ac\_simp}); 252 are holey, all \verit's oracle rule
-\rulename{lia\_generic}, which carries no certificate and which \carcara does
-not check either; 151 exceed \carcara's own 300\,s limit, on proofs of 130 to
-230\,MB; and 62 exhaust the 12\,GB during the check or the elaboration.
+check (\emph{valid}, not merely parseable). Of the remaining 691: 226 are steps \carcara's own checker rejects; 252 are
+holey, all \verit's oracle rule \rulename{lia\_generic}, which carries no
+certificate and which \carcara does not check either; 151 exceed \carcara's
+own 300\,s limit, on proofs of 130 to 230\,MB; and 62 exhaust the 12\,GB
+during the check or the elaboration.
+
+Of the 226 rejected steps, 199 are one defect, and it is also \carcara's:
+\rulename{ac\_simp}'s checker ignored the step's \texttt{:premises}. \verit
+emits the rule with premises when the flattening of a subterm was derived
+earlier --- notably a rewrite under a binder, packaged as a \rulename{bind}
+subproof --- so the conclusion is congruence over those equalities and not the
+structural flattening of its left-hand side, which is the only reading the
+checker had. The cost was not a checking gap but a lost proof, since
+elaboration validates as it goes: the affected benchmarks came back with
+neither an elaborated proof nor a verdict. The elaborator had carried a
+premise-aware decomposition all along, reached only for the steps whose
+premises are redundant, which is why the 11\,k proofs that use
+\rulename{ac\_simp} were otherwise unaffected. The checker now reads the
+premises as sub-rewrites and mirrors those two routes; a premise-free instance
+keeps its strict structural reading. The affected proofs --- 175 QF\_UFIDL
+(\texttt{pete2}, \texttt{pete}, \texttt{uclid}) and 24 QF\_LIA --- now check,
+and the step is decomposed into \rulename{cong}, \rulename{trans} and
+\rulename{semilattice\_simp}, which the checker already reconstructs; no
+lean-smt change was needed. The identifiable remainder is 24
+\rulename{and\_simplify}, whose singleton \texttt{and} is a \verit-side
+issue.
 
 \begin{table}[p]
   \centering

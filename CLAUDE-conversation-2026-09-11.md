@@ -1175,3 +1175,99 @@ On the interrupted experiment: I won't re-run that 1,749-step QF_UF proof end-to
 
 Still untouched and awaiting your go-ahead: the `ac_simp` premise-aware checker (~199 + ~198 proofs).
 
+## Turn: 2026-09-11 23:55 (session 315b089e) — the ac_simp fix
+
+**Carcara `13e721d7`, "checker: read ac_simp's premises".**
+
+The defect: `ac_simp`'s checker took `RuleArgs { conclusion, pool, .. }` — it never bound
+`premises`. veriT emits the rule with premises when the flattening of a subterm was derived
+earlier (a rewrite under a binder, packaged as a `bind` subproof), so the conclusion is congruence
+over those equalities, not the structural flattening of its left-hand side. The checker only had
+the latter reading, so every such step was rejected. And because elaboration validates as it goes,
+the whole proof was lost — no elaborated output, no verdict.
+
+The fix mirrors the elaborator's two routes, which had been premise-aware all along (they were
+only ever reached for steps whose premises are redundant):
+
+- Route 1, the historical reading: both premise orientations, normalization stops at a
+  replacement, and the conclusion's right-hand side must *be* the normal form of its left.
+- Route 2, meet in the middle: forward orientation only, normalization continues past a
+  replacement, and both sides must reach a common normal form.
+
+Route 2 is tried **only when the step has premises**. Without them, route 1 is the definition of
+the rule, and reading the conclusion up to a common normal form would accept an equality whose
+right-hand side is not the flattening of its left — which the existing test suite pins as `false`.
+Premises that are not unit equalities are ignored rather than rejected, so a step carrying one
+checks exactly as it did before premises were read at all.
+
+**Evidence.**
+
+- Minimal repro (`(step t2 (cl (= (and (and a c) c) (and b c))) :rule ac_simp :premises (h1))`
+  with `h1: (= a b)`): `invalid` → `valid`; elaborates to `cong`/`cong`/`semilattice_simp`/`trans`
+  with no `ac_simp` left, and the result checks valid at *elaborated* granularity.
+- Negative control on a real instance: `QF_LIA/20220307-SMPT/Referendum-PT-010/RF-03.smt2`, whose
+  step `t7` carries `:premises (t3 t5 t6)` and is exactly the step the cluster reported. Pre-fix
+  binary `invalid` on t7, post-fix `valid`. End to end through lean-smt: `valid: checked 134
+  steps, trusted 0, holes 0` in 1.06 s — a proof that had been entirely lost.
+- Regression: differential run of the pre-fix and post-fix binaries over 40 previously-valid
+  benchmarks carrying **501 premise-bearing `ac_simp` steps** (up to 40 in one file) — 40/40
+  identical verdicts.
+- Carcara suite green: 409 tests, including six new checker cases and one new elaboration test
+  (`ac_simp_with_premises`).
+
+**Scale, corrected.** The count really is 199 in round four, but my earlier filter reached it by
+accident. The accurate attribution, from `checking failed on step … with rule …` in the task logs,
+is 13 `ac_simp` and 24 `and_simplify`; the other 186 are `ac_simp` instances whose rule name fell
+past the runner's 2 KB stderr cap (their error text is the truncated `expected terms to be equal`).
+13 + 186 = 199: 175 QF_UFIDL (`pete2`, `pete`, `uclid`) and 24 QF_LIA. All 199 are available in the
+local SMT-LIB mirror, and a memory-gated differential run over them is in progress.
+
+Partial results at 39/199: **21 `invalid` → `valid`**, 9 `invalid` → `holey`, 9 `error` → `error`.
+Both non-`valid` groups are unrelated pre-existing residue, not `ac_simp`:
+
+- the `holey` ones are QF_LIA `calypto`, holey purely because of `lia_generic`, veriT's oracle
+  rule that carries no certificate and that Carcara does not check either;
+- the `error` ones are large QF_UFIDL `pete2` proofs (38 MB) hitting *my own* 6 GB `ulimit -v`, not
+  a checker failure — re-run at 12 GB, `c10bid_s.smt2` gives `invalid` (old) → `valid` (new).
+
+**No lean-smt change was needed**: the decomposition uses `cong`, `trans` and `semilattice_simp`,
+all of which the checker already reconstructs. The Carcara pin in `scripts/setup-alethe.sh` moved
+`92d8a42f` → `13e721d7`; `92d8a42f`, `67a5a426` and `13e721d7` are all still unpushed.
+
+Documented in `docs-alethe/elaboration-opportunities.md` §9 and in the report's known-failure
+paragraph (PDF rebuilt).
+
+## Turn: 2026-09-11 23:52:49 (session 315b089e)
+
+The fix is done, committed, and verified. Here's where things stand while the corpus-wide measurement finishes.
+
+## The defect
+
+`ac_simp`'s checker destructured `RuleArgs { conclusion, pool, .. }` — it never bound `premises`. veriT emits the rule *with* premises when the flattening of a subterm was derived earlier (a rewrite under a binder, packaged as a `bind` subproof), so the conclusion is congruence over those equalities rather than the structural flattening of its left-hand side. The checker only had the latter reading and rejected every such step.
+
+The cost wasn't a checking gap — it was a **lost proof**. Elaboration validates as it goes, so those benchmarks came back with neither an elaborated proof nor a verdict.
+
+## The fix — Carcara `13e721d7`
+
+The checker now builds a rewrite map from the unit-equality premises and mirrors the *elaborator's* two routes, which had been premise-aware all along (they were only ever reached for steps whose premises happen to be redundant):
+
+- **Route 1**, historical: both orientations, normalization stops at a replacement, RHS must *be* the normal form of the LHS.
+- **Route 2**, meet in the middle: forward orientation only, continuing past a replacement, both sides reaching a common normal form.
+
+Two deliberate restrictions keep existing behaviour exactly intact: route 2 runs **only when the step has premises** (without them route 1 *is* the rule's definition, and the suite pins a case that a common-normal-form reading would wrongly accept), and premises that aren't unit equalities are **ignored rather than rejected**, so such a step checks as it did when premises were unread.
+
+## Evidence
+
+- **Real instance, negative control.** `QF_LIA/…/Referendum-PT-010/RF-03.smt2`, step `t7` with `:premises (t3 t5 t6)` — the exact step the cluster reported. Pre-fix binary `invalid`, post-fix `valid`. End to end through lean-smt: **`valid: checked 134 steps, trusted 0, holes 0`** in 1.06 s, on a proof that had been entirely lost.
+- **Regression.** Differential run of pre-fix vs post-fix over 40 previously-valid benchmarks carrying **501 premise-bearing `ac_simp` steps** (up to 40 in one file): 40/40 identical verdicts.
+- **Suite green**: 409 tests, including 6 new checker cases and a new elaboration test.
+- **No lean-smt change needed** — the decomposition is `cong`/`trans`/`semilattice_simp`, all already reconstructed.
+
+## One correction to the count
+
+The 199 figure was right, but my earlier filter reached it by accident. Properly attributed from the logs: 13 `ac_simp` + 24 `and_simplify` named, and **186 more `ac_simp`** whose rule name fell past the runner's 2 KB stderr cap. 13 + 186 = 199 — **175 QF_UFIDL** (`pete2`/`pete`/`uclid`) and **24 QF_LIA**.
+
+At 41/199 of the memory-gated sweep: **23 `invalid`→`valid`**, 9 `→holey`, 9 `error`. Both non-valid groups are unrelated pre-existing residue, not `ac_simp` — the holey ones are `calypto` proofs holey purely from `lia_generic`, and the "errors" are 38 MB `pete2` proofs hitting *my own* 6 GB `ulimit -v`; re-run at 12 GB, `c10bid_s.smt2` gives `invalid`→`valid` too. I'll re-run those at the higher cap once the sweep lands.
+
+Two notes: `92d8a42f`, `67a5a426` and `13e721d7` are all still **unpushed**, so the pin bump in `setup-alethe.sh` won't resolve until they are. And you're editing `Command.lean`, `Frontend.lean`, `Reconstruct.lean` and `check-alethe.sh` for the CSV/boxplot feature — I left those alone and committed only my own files.
+
