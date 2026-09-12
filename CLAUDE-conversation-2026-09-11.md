@@ -791,3 +791,24 @@ against a pre-fix Carcara (built by reverting `92d8a42f` in a scratch build, tre
 
 4/4 go from rejected-at-parse to fully valid. Report updated to say the affected families now
 check valid rather than merely parse.
+
+## Turn: 2026-09-11 22:31:18 (session 315b089e)
+
+Done — and using the right binary changed the outcome materially.
+
+**Deleted** `~/verit/veriT` (2024.12.1-3-gbaa0e77). The local veriT is now `~/carcara/wt-corealethe/verit-2026.05/veriT` — I've recorded that in memory so I don't reach for the wrong one again. I left the `~/verit` source checkout (44 MB git repo, with a few untracked scratch `.smt2` files) — say the word if you want that gone too.
+
+**Why this mattered:** the 2024 build aborts with an internal assertion (`Assert (DAG_attr.sort[src]) == (DAG_attr.sort[dest]) failed`) on exactly the QF_LRA LassoRanker benchmarks I was trying to reproduce. That's what produced the "cannot reproduce locally" dead end twice. The 2026 build solves them fine.
+
+**So the parser fix is now confirmed on real proofs**, not just minimal repros. I generated proofs with veriT 2026.05 for four benchmarks from the failing families and A/B'd them against a pre-fix Carcara (built by reverting `92d8a42f` in a scratch build, tree restored afterwards):
+
+| benchmark | pre-fix | fixed |
+|---|---|---|
+| `efegp.t2.c_Iteration1_Lasso_3-pieceTemplate` | sort error | **valid** |
+| `disj_nightmare.t2.c_Iteration1_Loop_7-phaseTemplate` | sort error | **valid** |
+| `agafp.t2.c_Iteration1_Lasso_4-pieceTemplate` | sort error | **valid** |
+| `heidy7-simple.t2.c_Iteration2_Lasso_4-pieceTemplate` | sort error | **valid** |
+
+4/4 go from rejected-at-parse to **fully valid** — so those 653 veriT proofs aren't just parseable now, they check. The report says so explicitly (`b54882c`, still 16 pages).
+
+One thing to flag: `~/talks/talk-quantifiers/verit` is a wrapper script that pointed at the deleted binary, so that talk demo is now broken. I left it alone since it's unrelated to this work — trivial to repoint at the 2026 build if you want.
