@@ -886,3 +886,133 @@ user of the rules I just restructured: `aci_simp` in 19,015 tasks, `absorb` in 1
 
 Caveat: lean-smt's structural handlers cover the Prop operators only (`and`/`or`/`xor`); the
 bitvector instances are out of its scope, as they were before.
+
+## Turn: 2026-09-11 22:49:27 (session 315b089e)
+
+Checked both. Short answer: **alethe-core has the same failures (independently, and slightly worse); alethe-bv has none of them — but it's the heaviest user of the rules I just restructured, so I verified I didn't break it.**
+
+## `~/exp/alethe-core` — yes, same failures
+
+Carcara core-ladder eval, 25,200 benchmarks per solver, 14 logics, `elaborate` with the hoist/polyeq/local/core/core-taut ladder:
+
+| signature | veriT | cvc5 |
+|---|---|---|
+| `sort error: expected 'Real', got 'Int'` | **674** — QF_UFLRA 412, QF_LRA 193, QF_RDL 59, **LRA 10** | 0 |
+| "expected terms to be equal" | 198 | 0 |
+| `and_simplify` rejected | 24 | 0 |
+| `ac_simp` rejected | 13 | 0 |
+| `lia_generic` in proof | 261 | 0 |
+
+Two things worth noting:
+
+- The **parser defect is independently confirmed and slightly broader** — it also hits **LRA**, a logic the lean rounds don't cover. So `92d8a42f` recovers ~674 proofs here too, on top of the 653 in round four.
+- The **rejected-step counts match almost exactly** (198/24/13 vs the lean round's 186/24/13) — the same ~230 steps, so it's one shared Carcara-side gap, not a lean-pipeline artifact. That's also a third independent refutation of the old "almost entirely `lia_generic`" attribution.
+- cvc5 is clean of all of it in both evaluations.
+
+## `~/exp/alethe-bv` — none of these failures, but a compatibility risk I checked
+
+cvc5 QF_BV/QF_UFBV, `carcara check` only, 24,218 tasks: **zero** sort errors, zero rejected steps, zero checking failures. Expected — it's cvc5-only (no veriT parser issue) and bitvector-only (no reals).
+
+However it's by far the heaviest consumer of the AC rules I restructured this session: **`aci_simp` in 19,015 tasks, `absorb` in 16,586** (plus `ac_simp` 9,744 in the older `all-bv`). So I verified the split didn't break it:
+
+1. **It runs `check`, not the core pass, and I kept the legacy checkers** — all seven BV shapes still check: `absorb` on bvand/bvor/bvmul, `aci_simp` on bvadd/bvxor/concat/bvand-idempotence.
+2. **If the core pass *is* run**, the relabels are structurally correct:
+ `bvand`/`bvor` absorb + idempotence → `semilattice_simp`, `bvmul` absorb and `bvadd` → `poly_simp`, `bvxor` → `boolean_group_simp`, `concat` → `assoc_simp`.
+3. By construction it can't regress: `ac::relabel` only relabels **after the target rule's checker accepts the conclusion**, and keeps the step otherwise.
+
+One caveat, not a regression: lean-smt's structural handlers cover the Prop operators only (`and`/`or`/`xor`) — the bitvector instances remain out of its scope, exactly as they were under `aci_simp`.
+
+## Turn: 2026-09-11 22:58:55 (session 315b089e)
+
+This explains the singleton quirk but not t25. The proof is small — let me just read it.
+
+## Turn: 2026-09-11 22:58:55 (session 315b089e)
+
+Let me classify all the rejections by symptom, and reproduce an `ac_simp` one locally to see whether a singleton is involved.
+
+## Turn: 2026-09-11 22:58:55 (session 315b089e)
+
+Confirmed the mechanism. Here's the answer.
+
+## Why it matters even though `ac_simp` is delegated
+
+**Because elaboration validates as it goes.** The core pass only reduces a step *after* Carcara's own checker accepts it, so a step the checker rejects aborts `carcara elaborate` outright — exit 1, no output — before delegation can happen. Verified directly: with `and_simplify` *in* `--core-rules`, on the exact lean pipeline,
+
+```
+elaborate rc=1  verdict=''  bytes=0
+error: term '(not (= (of_bool$ false) (of_bool$ true)))' is of the wrong form, expected '(and ...)'
+  note: checking failed on step t25 with rule and_simplify
+```
+
+And at corpus scale that's uniform — for all **223** such tasks in round four:
+
+| symptom | carcara | elab | lean | n |
+|---|---|---|---|---|
+| "expected terms to be equal" (rule cut) | error | none | none | 186 |
+| `and_simplify` | error | none | none | 24 |
+| `ac_simp` | error | none | none | 13 |
+
+So these are **lost proofs, not trusted steps** — the checker never sees them. That makes them exactly as blocking as the 653 parser errors were, which is the opposite of what "it's delegated anyway" suggests.
+
+## What is *not* the singleton issue
+
+Of the veriT failures, setting aside singleton `(and x)`/`(or x)` as a known veriT-side fix:
+
+**Singleton-shaped — 24 `and_simplify`.** The symptom ("LHS is not an `and`") is the singleton print. But the instance I expanded fully is *worse* than a printing collapse: with `p_11 = (not p_3)`, step t25 reads `(= @p_11 @p_3)`, i.e. **`(not P) = P`** — false under any reading, and `trans`-chained into t26. Names are uniquely defined, so it isn't a shadowing artifact. Worth a veriT look independently of singletons.
+
+**Not singleton:**
+- **~198 "expected terms to be equal"** — 13 identified as `ac_simp`, 185 with the rule line past the runner's 2 KB stderr cap; the examples for both are the same SMPT `HouseConstruction` family, so they're very likely all `ac_simp`. These are *normalization mismatches*, not shape errors, and `apply_ac_simp` already collapses singletons — so a singleton wouldn't produce this message. **Largest non-singleton group, and unreproduced**: the RF-* benchmarks return `sat` with the local veriT and these flags, so the cluster ran a different configuration.
+- **27 resolution failures** — 22 + 5 "pivot was not found in clause" / "could not infer pivots for resolution step".
+- **4 stack overflows**, 3 unclassified `term '…'`.
+- **653/674 parser sort errors** — Int/Real subtyping (fixed, `92d8a42f`).
+- **252 `lia_generic`** — oracle rule, by design.
+- **151 Carcara timeouts + 62 memory** — scale.
+
+## The one cheap thing that unblocks the rest
+
+The runner truncates Carcara's stderr at 2 KB (`head -c 2000`), which is why 185 of 223 rejections have no rule attribution — the "checking failed on step X with rule Y" line comes last. Raising that cap (or grepping the rule line specifically) is a one-line change to `run-arms.sh` and would turn the largest unknown group into a named rule on the next round. Want me to make that change?
+
+## ac_simp and resolution failures root-caused (2026-09-11)
+
+Both are **Carcara-side**, both are the *lost proof* class (elaboration aborts, so lean never runs:
+`elab=none, lean=none`), and **neither is the singleton `(and x)`/`(or x)` quirk**.
+
+### ac_simp — the checker ignores `:premises` (199 round four, 198 alethe-core)
+
+veriT emits `ac_simp` in two forms: premise-free (pure flattening) and **premise-carrying** —
+congruence over previously derived equalities of subterms, which is how rewrites under a binder
+reach the conclusion (as `bind` subproofs among the premises). Carcara's *elaborator* supports it
+explicitly (`PremiseRewrites` in `core/simplification.rs`, documented in its doc comment). Its
+*checker* does not:
+
+```rust
+pub fn ac_simp(RuleArgs { conclusion, pool, .. }: RuleArgs) -> RuleResult {   // premises unbound
+    let (original, flattened) = match_term_err!((= psi phis) = &conclusion[0])?;
+    assert_eq(flattened, &apply_ac_simp(pool, &mut IndexMap::new(), original))
+}
+```
+
+Minimal reproducer: with premise `t1 : (= a b)`,
+`(step t2 (cl (= (and (and a c) c) (and b c))) :rule ac_simp :premises (t1))` →
+*expected terms to be equal: '(and b c)' and '(and a c)'*; the same step without premises is
+accepted. 6/6 sampled QF_UFIDL benchmarks reproduce. Families: QF_UFIDL pete2 139, pete 18,
+uclid 16, QF_LIA SMPT 15, calypto 9. Real instance `cxs-safety` t16:
+`(= @p_367 (or @p_1651 @p_1652)) :rule ac_simp :premises (t13 t15)`.
+
+**Fix:** make the checker premise-aware — build LHS→RHS from the unit-equality premises and apply
+it while normalizing, mirroring the elaborator's `ac_normal_form`. Sound (premises are proved
+equalities; replacement is congruence).
+
+### resolution — double-negated pivots (38 alethe-core, 11 round four)
+
+Largely already fixed: the three alethe-core cases retested locally now elaborate **valid** under
+all three of that eval's pipelines (that run used the Aug-30 `coreAlethe-upstream` Carcara).
+
+What remains is 11 tasks in round four — **6 veriT and 5 cvc5, so not veriT-specific** — all
+`could not infer pivots for resolution step: pivot was not eliminated`, raised by the **`local`
+pass**. Reproduced on cvc5 `QF_UF/2018-Goel-hwbench/QF_UF_h_Vlunc_ab_cti_max` (1,835 steps),
+step t911: the pivot is **`(not (not y$251))`** — a double negation. Carcara's pivot inference
+does not eliminate a doubly-negated pivot.
+
+Note the earlier check-arm classification missed these: they are *elaboration* errors, not
+`carcara check` errors.
