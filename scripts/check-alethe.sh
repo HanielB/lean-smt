@@ -57,6 +57,7 @@ fi
 
 smt2=$(realpath "$1")
 alethe=$(realpath "$2")
+given_alethe=$alethe   # what --csv should name, even when --elaborate checks a derived file
 shift 2
 flags="$*"
 
@@ -111,8 +112,6 @@ if $elaborate; then
     exit 1
   fi
   carcara_time=$(secs "$t0" "$(now)")
-  # named after the proof it came from: with --csv it is what the proof_file column records, and
-  # a bare "elaborated.alethe" would leave every benchmark's row looking the same
   alethe="$tmp/$(basename "$alethe").elaborated"
   printf '%s\n' "${out#*$'\n'}" > "$alethe"
 fi
@@ -139,6 +138,14 @@ mem_flag=()
 [ "$lean_mem" != 0 ] && mem_flag=(-M "$lean_mem")
 lake env lean "${mem_flag[@]}" --plugin="$plugin" "$lean_file" || status=$?
 lean_time=$(secs "$t0" "$(now)")
+
+# The proof the checker was handed under --elaborate is a temp file, and it is that path the
+# checker records. Name the run after the proof this script was given instead, which is the one
+# the row is about — and the only name that tells two benchmarks' rows apart.
+if [ -n "$csv" ] && [ "$alethe" != "$given_alethe" ] && [ -s "$csv/runs.csv" ]; then
+  awk -v p="$given_alethe" 'BEGIN { FS = OFS = "," } NR == 2 { $1 = p } { print }' \
+      "$csv/runs.csv" > "$csv/runs.csv.new" && mv "$csv/runs.csv.new" "$csv/runs.csv"
+fi
 
 if [ -n "$carcara_time" ]; then
   echo "time: carcara ${carcara_time}, lean ${lean_time}" >&2
