@@ -1016,3 +1016,162 @@ does not eliminate a doubly-negated pivot.
 
 Note the earlier check-arm classification missed these: they are *elaboration* errors, not
 `carcara check` errors.
+
+## Turn: 2026-09-11 23:06:33 (session 315b089e)
+
+Both root-caused. They're **Carcara-side**, both in the *lost proof* class (elaboration aborts → the checker never runs), and **neither is the singleton quirk**.
+
+## 1. `ac_simp` — the checker ignores `:premises` (199 round four, 198 alethe-core)
+
+veriT emits `ac_simp` in two forms: premise-free (pure flattening) and **premise-carrying** — congruence over previously derived equalities of subterms, which is how rewrites under a binder reach the conclusion (as `bind` subproofs among the premises).
+
+Carcara's **elaborator supports this explicitly** (`PremiseRewrites` in `core/simplification.rs`, and its doc comment names the form). Its **checker does not**:
+
+```rust
+pub fn ac_simp(RuleArgs { conclusion, pool, .. }: RuleResult {   // ← premises never bound
+    let (original, flattened) = match_term_err!((= psi phis) = &conclusion[0])?;
+    assert_eq(flattened, &apply_ac_simp(pool, &mut IndexMap::new(), original))
+}
+```
+
+Minimal reproducer — with premise `t1 : (= a b)`:
+```
+(step t2 (cl (= (and (and a c) c) (and b c))) :rule ac_simp :premises (t1))
+  → error: expected terms to be equal: '(and b c)' and '(and a c)'
+```
+The same step *without* premises is accepted. 6/6 sampled QF_UFIDL benchmarks reproduce; the real instance (`cxs-safety` t16) is `(= @p_367 (or @p_1651 @p_1652)) :rule ac_simp :premises (t13 t15)`. Families: QF_UFIDL pete2 139, pete 18, uclid 16, QF_LIA SMPT 15, calypto 9.
+
+**Fix:** make the checker premise-aware — build LHS→RHS from the unit-equality premises and apply it during normalization, mirroring the elaborator's `ac_normal_form`. Sound, since premises are proved equalities and replacement is congruence.
+
+## 2. Resolution — mostly already fixed; what's left is double-negated pivots
+
+The 38 in alethe-core are **largely stale**: all three cases I retested now elaborate **valid** under all three of that eval's pipelines. That run used the Aug-30 `coreAlethe-upstream` Carcara, so it's been fixed since.
+
+What remains is **11 tasks in round four — 6 veriT and 5 cvc5, so not veriT-specific**. All are `could not infer pivots for resolution step: pivot was not eliminated`, raised by the **`local` pass**. Reproduced on cvc5's `QF_UF_h_Vlunc_ab_cti_max` (1,835 steps), step t911:
+
+```
+pivot was not eliminated: '(not (not y$251))'
+```
+
+A **doubly-negated pivot** — Carcara's pivot inference doesn't eliminate it.
+
+One methodological note: my earlier check-arm classification reported "0 resolution failures" in round four because these are *elaboration* errors, not `carcara check` errors — a reminder that the two arms need separate accounting.
+
+## Where this leaves things
+
+| issue | n (round four) | side | status |
+|---|---|---|---|
+| `ac_simp` premises | 199 | Carcara checker | root-caused, fix designed |
+| pivot not eliminated (double negation) | 11 | Carcara `local` | root-caused, reproduced |
+| `and_simplify` wrong form | 24 | veriT | singleton-shaped, but one instance is a *false* step (`(not P) = P`) |
+| parser Int/Real | 653 | Carcara parser | **fixed** (`92d8a42f`) |
+
+Together the two new ones are **210 lost proofs**. Want me to implement the `ac_simp` premise-aware checker (the bigger win, and straightforward), the double-negation pivot fix, or both?
+
+## Report: the with/without-`native` data as its own section (2026-09-11)
+
+The `native` arm of round four was only a paragraph at the end of the shapes section; it is now
+**Section 4, "The `native` Variant"**, built like Section 3 — one table and two scatter figures,
+from `~/exp/results/alethe-lean/{cvc5,verit}-4` (both arms ran on the same node over the same
+elaborated proof, same 900 s limit, same per-step batching, so every benchmark is a matched pair).
+New analysis script: `~/exp/alethe-lean/plots-native.py` (per-logic table + `step-vs-native-*.pdf`
+and `kernel-step-vs-native-*.pdf`, copied into `docs-alethe/`).
+
+| | cvc5 | veriT |
+|---|---|---|
+| valid, per step → native | 16,853 → **16,876** | 15,334 → **15,343** |
+| timeouts | 2,287 → 2,264 | 2,494 → 2,485 |
+| paired: both / step only / native only | 16,849 / 4 / 27 | 15,333 / 1 / 10 |
+| median native ÷ per-step cpu | **0.92** (IQR 0.87–0.97) | **0.92** (0.88–0.97) |
+| native faster on | 90.9% | 93.4% |
+| kernel ms, median | 645 → 444 | 534 → 458 |
+| kernel cpu hours | 130.4 → 118.5 | 93.7 → 90.5 |
+
+Three things the data says that the old paragraph did not:
+
+- **Both asymmetries are boundary effects.** The 27 + 10 native-only proofs are 3,700–84,000-step
+  derivations the plain arm leaves running at 898 s; the 4 + 1 in the other direction finished at
+  853–883 s per step and crossed the limit under native. Nothing separates the arms except how
+  close a proof already was to the timeout.
+- **The gain is exactly where the normalizer runs.** Per-logic median ratio 0.84–0.86 in cvc5's
+  QF_LIA/QF_LRA/QF_RDL against **0.995** (cvc5) and 0.990 (veriT) in QF_UF, where no arithmetic
+  normalizer runs at all. The kernel figure colours arithmetic apart from uninterpreted and shows
+  the same split. Kernel share stays 64–65% (from 67/66%): the kernel's time is resolution and
+  congruence, which `native` does not touch.
+- **Nothing is traded in what is trusted.** Over all 32,182 matched pairs the trusted-step count
+  is identical on every one, and the holey population is the same — except one veriT proof that is
+  holey per step and exhausts memory under native, the only outcome native makes worse.
+
+Also corrected while writing: the native decide path is `la_generic`'s sign facts,
+`poly_simp_rel`'s nonzero coefficient and `evaluate`'s ground equalities (not `la_mult_pos`).
+Report now 20 pages, no undefined references, floats in order.
+
+## Turn: 2026-09-11 23:16:16 (session 2aac9d9a)
+
+The report now has the with/without-`native` data as **Section 4, "The `native` Variant"** — built like Section 3, with a per-logic table and two scatter figures, from the round-four SMT-LIB runs (`cvc5-4`, `verit-4`), where both arms ran on the same node over the same elaborated proof under the same 900 s limit and per-step batching, so every benchmark is a matched pair.
+
+| | cvc5 | veriT |
+|---|---|---|
+| valid, per step → native | 16,853 → 16,876 | 15,334 → 15,343 |
+| timeouts | 2,287 → 2,264 | 2,494 → 2,485 |
+| paired: both / step only / native only | 16,849 / 4 / 27 | 15,333 / 1 / 10 |
+| median native ÷ per-step CPU | 0.92 (IQR 0.87–0.97) | 0.92 (0.88–0.97) |
+| kernel ms, median | 645 → 444 | 534 → 458 |
+
+Three things the measurement says that the old one-paragraph version did not:
+
+- **Both asymmetries are boundary effects.** The native-only proofs are 3,700–84,000-step derivations the plain arm leaves running at 898 s; the five in the other direction finished at 853–883 s per step and crossed the limit under native.
+- **The gain is where the normalizer runs.** Per-logic median ratio 0.84–0.86 in cvc5's QF_LIA/QF_LRA/QF_RDL against 0.995 in QF_UF, where no arithmetic normalizer runs at all — the kernel figure (`kernel-step-vs-native-*.pdf`) draws arithmetic apart from uninterpreted and shows the same split. Kernel share only falls 67%→64%, because the kernel's time is resolution and congruence.
+- **Nothing is traded in trust.** Over all 32,182 matched pairs the trusted-step count is identical on every one; the only outcome native makes worse is one veriT proof that is holey per step and exhausts memory under native.
+
+Also corrected: the native decide path is `la_generic`'s sign facts, `poly_simp_rel`'s nonzero coefficient and `evaluate`'s ground equalities — the old paragraph's `la_mult_pos` was wrong.
+
+New files: `docs-alethe/{step-vs-native,kernel-step-vs-native}-{cvc5,veriT}.pdf`, generated by `~/exp/alethe-lean/plots-native.py`. The report builds clean at 20 pages, no undefined references. Not committed — say the word and I'll commit the tex, the four plots and the log entry.
+
+## Turn: 2026-09-11 23:27:34 (session 315b089e)
+
+Still running (large QF_UF proof). Here are both answers.
+
+## Your question: how could wt-corealethe elaborate it?
+
+**It couldn't, and it didn't.** Its `ac_simp` checker is byte-identical to bv-fixes — `RuleArgs { conclusion, pool, .. }`, premises never bound. And the alethe-core run shows the same failures at the same rate (198 there vs 199 in round four).
+
+What *is* true is that the premise-aware elaborator recipe gets exercised constantly — just on a different flavour. veriT's premise-carrying `ac_simp` comes in two kinds:
+
+- **premises redundant for the checker** — the RHS already equals the premise-free ac-normal-form. The checker passes (it ignores the premises), and the elaborator then *uses* them to build a better decomposition, notably to get under binders via `bind` subproofs without deriving binder congruence. Verified directly: a step with a premise but a premise-free-normal RHS checks fine. This is the overwhelming majority — **11,426 proofs containing `ac_simp` check and elaborate cleanly**.
+- **premises actually needed** — RHS ≠ premise-free normal form. Both worktrees reject at check time, before the elaborator ever runs: **781 proofs**, of which 199 with this signature.
+
+So the elaborator's `PremiseRewrites` support was never validating the hard flavour; the checker gate hides it. That's why the fix belongs in the checker.
+
+## The pivot fix — done (`67a5a426`)
+
+Root cause is sharper than "double negation": in `QF_UF_h_Vlunc_ab_cti_max` step t911, a **tautology premise `(cl y$251 (not y$251))`** contributes *both* literals as pivots; a later literal then greedily eliminates the wrong one (`below` is always tried first), leaving `(not (not y$251))` un-eliminated.
+
+The decisive observation: **`carcara check` accepts this proof** — its `resolution` checker falls back to RUP — while `elaborate`'s pivot inference has no such fallback and **aborts the entire run** (exit 1, no output). So a perfectly checkable proof was being thrown away.
+
+Fix: when neither greedy inference nor `rup_chain` produces a chain, **keep the step with a warning**, exactly as the pass already does for `ac_simp`, `shuffle`, `nary_elim`. Strictly more permissive — the branch is only reached where elaboration previously failed outright.
+
+Result on the reproducer: elaboration goes from `rc=1, no output` to **`rc=0, valid, 1,749 steps`** with 7 kept steps, and the output checks **valid** at default granularity. Carcara suite green (125+221+28+17+13+3+1+1).
+
+One honest caveat: the output no longer satisfies `--check-granularity elaborated` (`expected 28 arguments, got 0` on the kept step) — which is correct, since that step is precisely the one that wasn't elaborated. The lean pipeline doesn't use elaborated granularity, and lean-smt's `resolveChain` searches pivots per link, so it's unaffected; I've left the end-to-end lean check running to confirm.
+
+I have **not** touched `ac_simp` yet, per your instruction. When you want it: bind `premises`, build LHS→RHS from the unit equalities, and apply it during normalization (mirroring the elaborator's `ac_normal_form`) — worth ~199 proofs in round four plus ~198 in alethe-core.
+
+## Turn: 2026-09-11 23:32:13 (session 315b089e)
+
+Understood — and you were right that it was a real hole, not just carelessness on my part.
+
+**State right now:** nothing of mine is running; 5 GB used, 25 GB free. My run died from its own `timeout 900`, not the OOM killer — but it *could* have eaten the box, because `check-alethe.sh` ran `lake env lean` with **no memory bound at all** (the cluster runner has `-M 10000`; the local script had nothing).
+
+**Fixed** (`ec870af`): the script now passes `-M $LEAN_MEM`, default **8000 MB**, `LEAN_MEM=0` to disable. Verified both directions — the normal run still passes, and `LEAN_MEM=16` aborts with `excessive memory consumption detected`, so the flag genuinely applies.
+
+**My practice from here on** for anything heavy:
+- Lean: always through `check-alethe.sh` (now capped) or an explicit `-M`, and **one at a time** — never a Lean run alongside a `lake build`.
+- Big proofs get a small `LEAN_MEM` and a short `timeout` first, and I only raise them if the small run shows it's worth it.
+- Carcara/veriT/cvc5 batches: bounded `timeout`, and I'll keep sample sizes small (the 6-benchmark sweeps rather than the whole family).
+- I'll check `free`/`ps` before launching anything long rather than after.
+
+On the interrupted experiment: I won't re-run that 1,749-step QF_UF proof end-to-end — it's the expensive way to confirm something I can already state precisely. What the pivot fix (`67a5a426`) demonstrably buys is measured at the Carcara level: elaboration goes from `rc=1, no output` (proof lost) to `rc=0, valid, 1,749 steps`, and the result checks **valid** at default granularity. Whether lean then validates that particular proof within 900 s is a separate scale question — it's one of the big hwbench proofs that were already near the timeout boundary in round four.
+
+Still untouched and awaiting your go-ahead: the `ac_simp` premise-aware checker (~199 + ~198 proofs).
+

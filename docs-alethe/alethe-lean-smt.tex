@@ -169,7 +169,9 @@ text (Section~\ref{sec:parsing}), the replay of steps and their submission
 to the kernel (Section~\ref{sec:steps}), the reconstruction techniques per
 rule (Section~\ref{sec:rules}), and the changes this required in \carcara
 (Section~\ref{sec:carcara}). Section~\ref{sec:eval} reports the evaluation,
-and Section~\ref{sec:shapes} the comparison of the kernel submission shapes.
+Section~\ref{sec:shapes} the comparison of the kernel submission shapes, and
+Section~\ref{sec:native} that of the \texttt{native} variant against the
+kernel-checked default.
 
 \subsection{From Proof Text to Terms}
 \label{sec:parsing}
@@ -824,9 +826,9 @@ section records what led to that choice: the comparison with the one-term
 shape, in which the whole derivation is reconstructed as one term and checked
 in a single kernel call --- the shape the \cpc path uses --- made on the
 three-logic SMT-LIB round that preceded the twelve-logic one (QF\_UF, QF\_LIA
-and QF\_LRA, 9\,812 benchmarks per solver) and on the Sledgehammer round; and
-the comparison with the \texttt{native} variant, made on the twelve-logic
-round.
+and QF\_LRA, 9\,812 benchmarks per solver) and on the Sledgehammer round. The
+other variant of the default shape, \texttt{native}, is the subject of
+Section~\ref{sec:native}.
 
 \paragraph{SMT-LIB.} Figure~\ref{fig:stepshot} puts the two shapes side by
 side. Per-step checking dominates in every logic and for both solvers: it
@@ -885,17 +887,151 @@ is a proof the per-step arm also fails.
   \label{fig:stepshotsh}
 \end{figure}
 
-\paragraph{Native evaluation.} The twelve-logic round ran the per-step shape
-twice, plain and with \texttt{native}, which evaluates the reflective
-normalizers and the decision procedures through compiled code instead of the
-kernel and so puts Lean's compiler in the trusted base. Native validates 23
-more \cvcv proofs (16\,876 against 16\,853) and 9 more \verit ones (15\,343
-against 15\,334), with the same trusted steps; paired per proof, 15\,333
-\verit proofs are validated by both, 10 by native only and one by the
-per-step arm only, and native is faster on nearly every proof both validate.
-The gain is real but small, because the kernel's time is dominated by the
-resolution chains rather than by the normalizers that \texttt{native}
-accelerates; it is the wrong place to spend trust for what it buys.
+\clearpage
+\section{The \texttt{native} Variant}
+\label{sec:native}
+
+The reconstructors have a second mode. Under \texttt{native}, the polynomial
+normalizer behind the arithmetic rules and the decision procedure behind the
+decidable side conditions --- the sign facts of \rulename{la\_generic}, the
+nonzero coefficient of \rulename{poly\_simp\_rel}, and \rulename{evaluate}'s
+ground equalities --- run
+as compiled Lean code, and their verdicts enter the proof through
+\texttt{nativeDecide} instead of being reduced by the kernel. It buys time and
+costs trust: Lean's compiler and runtime join the kernel and \cvcv's parser in
+the trusted base. Both sides are measured here on the twelve-logic SMT-LIB
+round, where the two arms ran on the same node over the same elaborated proof,
+under the same 900\,s limit and with the same per-step batching, so that every
+benchmark is a matched pair.
+
+\begin{table}[p]
+  \centering
+  \caption{The per-step shape against its \texttt{native} variant on the
+    SMT-LIB round, over the benchmarks for which both arms ran: proofs
+    validated with no trusted step and timeouts, per arm; then the paired
+    verdicts --- validated by \emph{both} arms, by the plain arm only, by
+    \texttt{native} only. The outcomes not shown are the same for both arms
+    (5 and 64 memory failures, 2 and 54 proofs with a trusted step), but for
+    one \verit proof that is holey per step and exhausts memory under
+    \texttt{native}. The last column is the median ratio of \texttt{native}'s
+    CPU time to the plain arm's, over the proofs both validate.}
+  \label{tab:native}
+  \small
+  \setlength{\tabcolsep}{3.4pt}
+  \begin{tabular}{l l r r @{\quad} r r @{\quad} r r r @{\quad} r}
+    \toprule
+    & & \multicolumn{2}{c}{per step} & \multicolumn{2}{c}{\texttt{native}}
+      & \multicolumn{3}{c}{paired} & \\
+    \cmidrule(lr){3-4} \cmidrule(lr){5-6} \cmidrule(lr){7-9}
+    solver & logic & valid & t/o & valid & t/o & both & step & \texttt{nat.}
+      & ratio \\
+    \midrule
+    \multirow{13}{*}{\cvcv}
+      & QF\_UF    & 2\,527 & 1\,763 & 2\,528 & 1\,762 & 2\,526 & 1 &  2 & 0.995 \\
+      & QF\_IDL   &    276 &    196 &    276 &    196 &    276 & 0 &  0 & 0.947 \\
+      & QF\_RDL   &     39 &     35 &     42 &     32 &     39 & 0 &  3 & 0.841 \\
+      & QF\_LIA   & 2\,341 &    152 & 2\,354 &    139 & 2\,341 & 0 & 13 & 0.851 \\
+      & QF\_LRA   &    425 &    101 &    430 &     96 &    422 & 3 &  8 & 0.856 \\
+      & QF\_UFIDL &     30 &      8 &     30 &      8 &     30 & 0 &  0 & 0.953 \\
+      & QF\_UFLIA &    166 &      4 &    166 &      4 &    166 & 0 &  0 & 0.872 \\
+      & QF\_UFLRA &    432 &      9 &    433 &      8 &    432 & 0 &  1 & 0.964 \\
+      & UF        & 3\,145 &      7 & 3\,145 &      7 & 3\,145 & 0 &  0 & 0.919 \\
+      & UFIDL     &     53 &      0 &     53 &      0 &     53 & 0 &  0 & 0.930 \\
+      & UFLIA     & 7\,409 &     12 & 7\,409 &     12 & 7\,409 & 0 &  0 & 0.913 \\
+      & UFLRA     &     10 &      0 &     10 &      0 &     10 & 0 &  0 & 0.927 \\
+    \cmidrule(l){2-10}
+      & total     & 16\,853 & 2\,287 & 16\,876 & 2\,264 & 16\,849 & 4 & 27 & 0.92 \\
+    \midrule
+    \multirow{13}{*}{\verit}
+      & QF\_UF    & 2\,446 & 1\,729 & 2\,447 & 1\,728 & 2\,445 & 1 & 2 & 0.990 \\
+      & QF\_IDL   &    222 &    293 &    224 &    291 &    222 & 0 & 2 & 0.975 \\
+      & QF\_RDL   &     15 &     13 &     20 &      8 &     15 & 0 & 5 & 0.727 \\
+      & QF\_LIA   & 2\,220 &    187 & 2\,220 &    187 & 2\,220 & 0 & 0 & 0.871 \\
+      & QF\_LRA   &    282 &    105 &    283 &    104 &    282 & 0 & 1 & 0.923 \\
+      & QF\_UFIDL &     47 &     16 &     47 &     16 &     47 & 0 & 0 & 0.977 \\
+      & QF\_UFLIA &    172 &      1 &    172 &      1 &    172 & 0 & 0 & 0.939 \\
+      & QF\_UFLRA &      3 &      0 &      3 &      0 &      3 & 0 & 0 & 0.844 \\
+      & UF        & 2\,860 &      3 & 2\,860 &      3 & 2\,860 & 0 & 0 & 0.907 \\
+      & UFIDL     &     51 &      0 &     51 &      0 &     51 & 0 & 0 & 0.957 \\
+      & UFLIA     & 7\,006 &    147 & 7\,006 &    147 & 7\,006 & 0 & 0 & 0.920 \\
+      & UFLRA     &     10 &      0 &     10 &      0 &     10 & 0 & 0 & 0.866 \\
+    \cmidrule(l){2-10}
+      & total     & 15\,334 & 2\,494 & 15\,343 & 2\,485 & 15\,333 & 1 & 10 & 0.92 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Outcomes.} Table~\ref{tab:native} gives the round per logic.
+\texttt{native} validates 23 more \cvcv proofs (16\,876 against 16\,853) and 9
+more \verit ones (15\,343 against 15\,334), a tenth of a percent of either
+population, and the gain is timeouts avoided: 2\,287 fall to 2\,264 and 2\,494
+to 2\,485. Nothing else moves. The memory failures are the same 5 and 64 runs,
+the proofs with a trusted step the same 2 and 54 --- except that one \verit
+proof reported holey per step exhausts memory under \texttt{native} instead,
+the single outcome on the corpus that the variant makes worse.
+
+\paragraph{Paired.} Figure~\ref{fig:native} puts the two arms on the same
+proof. Per logic the two columns of validated proofs are equal or differ by a
+handful, and the paired counts say why: 16\,849 (\cvcv) and 15\,333 (\verit)
+proofs are validated by both arms, 27 and 10 by \texttt{native} only, 4 and 1
+by the plain arm only. Both asymmetries sit against the limit. The proofs only
+\texttt{native} validates are elaborated derivations of 3\,700 to 84\,000
+steps, arithmetic but for four, that the plain arm leaves running at 898\,s
+and \texttt{native} finishes between 468 and 899\,s; the five in the other
+direction are proofs the plain arm finished at 853 to 883\,s and
+\texttt{native} did not finish at all. What separates the arms is how close a
+proof already was to the timeout, not what either can check.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.49\textwidth]{step-vs-native-cvc5}
+  \hfill
+  \includegraphics[width=0.49\textwidth]{step-vs-native-veriT}
+  \caption{The per-step shape against its \texttt{native} variant on the same
+    SMT-LIB proofs, CPU seconds. A point on a dotted border is a proof the
+    corresponding arm did not validate; the grey lines are equality and
+    factors of ten and a hundred. The cloud sits just below the diagonal, and
+    the points either arm loses alone are all against the limit.}
+  \label{fig:native}
+\end{figure}
+
+\paragraph{Where the time goes.} On the proofs both arms validate,
+\texttt{native} is faster on 90.9\% (\cvcv) and 93.4\% (\verit) of them, and
+the median ratio of its CPU time to the plain arm's is 0.92 for both solvers,
+with the middle half of the proofs between 0.87 and 0.97. Summed, 193.3 CPU hours become 184.4 and 141.4
+become 138.2. Figure~\ref{fig:nativekernel} isolates the kernel's share of
+that: its median falls from 645 to 444\,ms per \cvcv proof and from 534 to
+458\,ms per \verit one, 130.4 CPU hours to 118.5 and 93.7 to 90.5, but it
+still accounts for 64\% and 65\% of each arm's time against 67\% and 66\%
+before. The saving is a slice of the kernel's work rather than most of it,
+because what the kernel spends its time on is the resolution chains and the
+congruences, which \texttt{native} does not touch. The per-logic medians of
+the last column of Table~\ref{tab:native} locate the gain exactly: 0.84 to
+0.86 in \cvcv's QF\_LIA, QF\_LRA and QF\_RDL, where the normalizer runs on
+every arithmetic step, against 0.995 and 0.990 in QF\_UF, where it never runs
+at all.
+
+\begin{figure}[!tb]
+  \centering
+  \includegraphics[width=0.49\textwidth]{kernel-step-vs-native-cvc5}
+  \hfill
+  \includegraphics[width=0.49\textwidth]{kernel-step-vs-native-veriT}
+  \caption{The kernel's own time in the two arms, on the proofs both validate,
+    seconds; the proofs of a logic with arithmetic are drawn apart from those
+    of QF\_UF and UF. The saving is where the normalizer runs: the
+    uninterpreted proofs lie on the diagonal, the arithmetic ones below it.}
+  \label{fig:nativekernel}
+\end{figure}
+
+\paragraph{What it is worth.} The variant changes nothing about what is
+admitted without proof: over the 32\,182 matched pairs both arms validate, the
+number of trusted steps is identical on every single one, and the holey
+population is the same. So \texttt{native} buys 8\% of the median checking
+time and a tenth of a percent of the corpus, at the price of the compiler and
+the runtime in the trusted base. That is the wrong trade for a checker whose
+point is the kernel, and the plain per-step shape stays the default; the
+variant is kept for the one case its numbers do favour, a large arithmetic
+proof that will not check in the time available otherwise.
 
 \begin{thebibliography}{1}
 \bibitem{Barbosa2020}
