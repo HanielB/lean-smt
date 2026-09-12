@@ -69,6 +69,29 @@ register_option smt.alethe.jobs : Nat := {
 proofs in memory"
 }
 
+register_option smt.alethe.stats : Bool := {
+  defValue := false
+  descr := "record what every step cost, as carcara's `bench --dump-to-csv` does (one row per \
+step); `#check_alethe … csv \"<dir>\"` turns it on and writes the files"
+}
+
+/-- What one step cost, in nanoseconds: a row of `steps.csv`. -/
+structure StepTiming where
+  id : String
+  /-- The rule the step is counted under (`Step.countedRule`). -/
+  rule : String
+  /-- Nesting depth of the step (0 at the top level). -/
+  depth : Nat := 0
+  /-- Building the clause, running the reconstructors and concluding the step, with the kernel's
+      time taken out. -/
+  reconstructNs : Nat := 0
+  /-- The kernel's time for the step. Exact under the default `smt.alethe.batch 1`, one call per
+      step; a larger batch's time is split evenly over the steps the call covers. -/
+  kernelNs : Nat := 0
+  /-- Whether the step was trusted rather than checked. -/
+  trusted : Bool := false
+deriving Inhabited
+
 structure Stats where
   /-- Steps proved by a reconstructor and accepted by the kernel. -/
   checked : Nat := 0
@@ -79,10 +102,26 @@ structure Stats where
   failures : Array (String × String × String) := #[]
   /-- Whether the empty clause was derived. -/
   emptyClause : Bool := false
-  /-- Milliseconds spent in the kernel, summed over the calls: with `smt.alethe.jobs > 1` they run
+  /-- Nanoseconds spent in the kernel, summed over the calls: with `smt.alethe.jobs > 1` they run
       concurrently and the sum exceeds the time the checker spent waiting for them. -/
-  kernelMs : Nat := 0
+  kernelNs : Nat := 0
+  /-- Nanoseconds spent binding the proof's assumptions to the problem's assertions, and the part
+      of that spent comparing terms with `polyeq` (carcara's `assume` and `polyeq` columns). -/
+  assumeNs : Nat := 0
+  polyeqNs : Nat := 0
+  /-- Nanoseconds spent before the first command: reconstructing the problem's assertions and
+      opening the context they are hypotheses of. Belongs to no step, and on a problem with many
+      assertions it is the bulk of what the per-step records do not account for. -/
+  setupNs : Nat := 0
+  /-- One record per step, in proof order; empty unless `smt.alethe.stats` is set. -/
+  steps : Array StepTiming := #[]
+  /-- Whether some kernel call covered more than one step, so that the per-step kernel times in
+      `steps` are a batch's time split evenly rather than the step's own. -/
+  kernelSplit : Bool := false
 deriving Inhabited
+
+/-- Milliseconds spent in the kernel. -/
+def Stats.kernelMs (st : Stats) : Nat := st.kernelNs / 1000000
 
 def Stats.numTrusted (st : Stats) : Nat :=
   st.trusted.fold (fun n _ k => n + k) 0
@@ -112,7 +151,7 @@ structure PendingStep where
 deriving Inhabited
 
 /-- A kernel call in flight: the steps it covers, the context it runs in, and its task (the
-    inferred type or the kernel's exception, and the milliseconds it took). -/
+    inferred type or the kernel's exception, and the nanoseconds it took). -/
 structure KernelJob where
   steps : Array PendingStep
   lctx : LocalContext
@@ -147,6 +186,11 @@ structure DState where
   pendingSeen : ExprSet := {}
   /-- Kernel calls running concurrently, oldest first. -/
   inflight : Array KernelJob := #[]
+  /-- Whether to record `Stats.steps` (`smt.alethe.stats`), read once at the start of the run. -/
+  collectSteps : Bool := false
+  /-- Step id to its index in `Stats.steps`, so that a kernel call and a trust decision — both of
+      which happen after the step was recorded — can find its record. -/
+  timingIndex : Std.HashMap String Nat := {}
 
 abbrev AletheM := ReaderT (IO.Ref DState) ReconstructM
 
@@ -166,17 +210,58 @@ def registerPremise (p : Premise) : AletheM Unit := do
   if (← getD).steps.contains p.id then throwError "duplicate step id '{p.id}'"
   modifyD fun st => { st with steps := st.steps.insert p.id p }
 
+/-- The rule a step is counted under: `rare_rewrite` steps are counted per RARE rule. -/
+def countedRule (rule : String) (args : Array (Arg cvc5.Term)) : String :=
+  match rule, args[0]? with
+  | "rare_rewrite", some (Arg.str name) => s!"rare_rewrite:{name}"
+  | rule, _ => rule
+
+def Step.countedRule (s : Step) : String := _root_.Smt.Alethe.countedRule s.rule s.args
+
+/-- Open the record of a step about to be reconstructed, returning its index in `Stats.steps`
+    (meaningless, and unused, when the records are not being collected). -/
+def beginStepTiming (id rule : String) : AletheM Nat := do
+  let st ← getD
+  if !st.collectSteps then return 0
+  let i := st.stats.steps.size
+  modifyD fun st => { st with
+    stats := { st.stats with steps := st.stats.steps.push { id, rule, depth := st.depth } },
+    timingIndex := st.timingIndex.insert id i }
+  return i
+
+/-- Close the record opened by `beginStepTiming`: `totalNs` is the wall time of the whole step and
+    `kernel₀` the kernel counter as it stood when the step began, so that a kernel call made while
+    concluding the step (a batch flush) is not counted twice. -/
+def endStepTiming (i totalNs kernel₀ : Nat) : AletheM Unit := do
+  let st ← getD
+  if !st.collectSteps then return
+  let ownNs := totalNs - (st.stats.kernelNs - kernel₀)
+  modifyD fun st => { st with stats := { st.stats with
+    steps := st.stats.steps.modify i fun t => { t with reconstructNs := ownNs } } }
+
+/-- Attribute a kernel call's time to the steps it covered, evenly. -/
+def attributeKernel (steps : Array PendingStep) (ns : Nat) : AletheM Unit := do
+  let st ← getD
+  if !st.collectSteps || steps.isEmpty then return
+  let share := ns / steps.size
+  modifyD fun st => Id.run do
+    let mut ts := st.stats.steps
+    for p in steps do
+      if let some i := st.timingIndex[p.id]? then
+        ts := ts.modify i fun t => { t with kernelNs := t.kernelNs + share }
+    return { st with stats := { st.stats with
+      steps := ts, kernelSplit := st.stats.kernelSplit || steps.size > 1 } }
+
 def recordTrustRule (id rule : String) (msg : String) : AletheM Unit := do
   trace[smt.alethe.step] "trusting {id} ({rule}): {msg}"
   modifyD fun st => { st with stats := { st.stats with
     trusted := st.stats.trusted.insert rule (st.stats.trusted.getD rule 0 + 1),
     failures := st.stats.failures.push (id, rule, msg) } }
-
-/-- The rule a step is counted under: `rare_rewrite` steps are counted per RARE rule. -/
-def Step.countedRule (s : Step) : String :=
-  match s.rule, s.args[0]? with
-  | "rare_rewrite", some (Arg.str name) => s!"rare_rewrite:{name}"
-  | rule, _ => rule
+  let st ← getD
+  if st.collectSteps then
+    if let some i := st.timingIndex[id]? then
+      modifyD fun st => { st with stats := { st.stats with
+        steps := st.stats.steps.modify i fun t => { t with trusted := true } } }
 
 def recordTrust (s : Step) (msg : String) : AletheM Unit :=
   recordTrustRule s.id s.countedRule msg
@@ -270,9 +355,10 @@ def firstLine (s : String) : String := (s.splitOn "\n").headD s
 
 /-- Record the outcome of one kernel call. A rejected batch of more than one step is re-checked
     step by step, so that what is trusted is what the kernel actually rejected. -/
-def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (ms : Nat) :
+def recordBatch (steps : Array PendingStep) (r : Except Kernel.Exception Expr) (ns : Nat) :
     AletheM Unit := do
-  modifyD fun st => { st with stats := { st.stats with kernelMs := st.stats.kernelMs + ms } }
+  modifyD fun st => { st with stats := { st.stats with kernelNs := st.stats.kernelNs + ns } }
+  attributeKernel steps ns
   match r with
   | .ok _ =>
     modifyD fun st => { st with stats := { st.stats with checked := st.stats.checked + steps.size } }
@@ -296,8 +382,8 @@ def joinOne : AletheM Unit := do
   if h : 0 < st.inflight.size then
     let job := st.inflight[0]
     modifyD fun st => { st with inflight := st.inflight.extract 1 st.inflight.size }
-    let (r, ms) ← IO.wait job.task
-    recordBatch job.steps r ms
+    let (r, ns) ← IO.wait job.task
+    recordBatch job.steps r ns
 
 /-- Wait until at most `n` kernel calls are in flight. -/
 partial def drainTo (n : Nat) : AletheM Unit := do
@@ -323,17 +409,18 @@ def flushBatch : AletheM Unit := do
   let env ← getEnv
   let jobs := smt.alethe.jobs.get (← getOptions)
   if jobs ≤ 1 then
-    let t₀ ← IO.monoMsNow
+    let t₀ ← IO.monoNanosNow
     let r ← IO.lazyPure fun _ => Kernel.check env lctx e
-    let t₁ ← IO.monoMsNow
-    trace[smt.alethe.step] "kernel batch of {steps.size} ending at {steps.back!.id}: {t₁ - t₀} ms"
+    let t₁ ← IO.monoNanosNow
+    trace[smt.alethe.step] "kernel batch of {steps.size} ending at {steps.back!.id}: \
+{(t₁ - t₀) / 1000000} ms"
     recordBatch steps r (t₁ - t₀)
   else
     drainTo (jobs - 1)
     let task ← (BaseIO.asTask do
-      let t₀ ← IO.monoMsNow
+      let t₀ ← IO.monoNanosNow
       let r ← lazyPure fun _ => Kernel.check env lctx e
-      let t₁ ← IO.monoMsNow
+      let t₁ ← IO.monoNanosNow
       return (r, t₁ - t₀)).toIO
     modifyD fun st => { st with inflight := st.inflight.push { steps, lctx, task } }
 
@@ -442,22 +529,26 @@ def runStepData (d : StepData cvc5.Term) : AletheM Unit := do
     let n := (← getD).steps.size
     if n % every == 0 then
       progressLine s!"[alethe] step {n}: {d.id} ({d.rule}, {d.cl.size} literals) at {← IO.monoMsNow} ms"
-  let t₀ ← IO.monoMsNow
+  let t₀ ← IO.monoNanosNow
+  let k₀ := (← getD).stats.kernelNs
+  let i ← beginStepTiming d.id (countedRule d.rule d.args)
   let s ← mkStep d
-  let t₁ ← IO.monoMsNow
+  let t₁ ← IO.monoNanosNow
   let e ← reconstructStep s
-  let t₂ ← IO.monoMsNow
+  let t₂ ← IO.monoNanosNow
   let e ← concludeStep s e
   registerPremise { id := d.id, lits := d.cl, concl := s.concl, proof := e }
+  let t₃ ← IO.monoNanosNow
+  endStepTiming i (t₃ - t₀) k₀
   if every > 0 then
-    let dt := (← IO.monoMsNow) - t₀
-    if dt ≥ 200 then
-      progressLine s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {dt} ms (mkStep {t₁-t₀}, reconstruct {t₂-t₁}, conclude {(← IO.monoMsNow)-t₂})"
+    let ms (a b : Nat) := (b - a) / 1000000
+    if ms t₀ t₃ ≥ 200 then
+      progressLine s!"[alethe] slow step {d.id} ({d.rule}, {d.cl.size} literals, {d.premises.size} premises): {ms t₀ t₃} ms (mkStep {ms t₀ t₁}, reconstruct {ms t₁ t₂}, conclude {ms t₂ t₃})"
 
 /-- A top-level `assume`: bind it to the assertion with the same term. A reflexive equality is
     accepted without an assertion: it is how a `define-fun` of the problem surfaces once the
     defined symbol has been expanded on both sides (cvc5 asserts definitions as equations). -/
-def runAssume (id : String) (t : cvc5.Term) : AletheM Unit := do
+def runAssumeCore (id : String) (t : cvc5.Term) : AletheM Unit := do
   if smt.alethe.progress.get (← getOptions) > 0 then
     progressLine s!"[alethe] assume {id}"
   let st ← getD
@@ -476,19 +567,32 @@ def runAssume (id : String) (t : cvc5.Term) : AletheM Unit := do
       -- either orientation, bound variables renamed, numerals spelled differently (cvc5 prints
       -- the problem's `0.0` as `0/1`). Keep the proof's view of the term, and prove it from the
       -- assertion's
-      for (ta, ap, h) in st.asserts do
-        if polyeq t ta then
-          let some he ← polyeqProof? ap p
-            | throwError "assumption '{id}' is the assertion {ta} up to representation, but the \
-                two propositions could not be reconciled:\n  {ap}\n  {p}"
-          registerPremise { id, lits := #[t], concl := p, proof := ← Meta.mkEqMP he h }
-          return
+      let t₀ ← IO.monoNanosNow
+      let matched := st.asserts.find? fun (ta, _, _) => polyeq t ta
+      let t₁ ← IO.monoNanosNow
+      modifyD fun st => { st with stats := { st.stats with
+        polyeqNs := st.stats.polyeqNs + (t₁ - t₀) } }
+      if let some (ta, ap, h) := matched then
+        let some he ← polyeqProof? ap p
+          | throwError "assumption '{id}' is the assertion {ta} up to representation, but the \
+              two propositions could not be reconciled:\n  {ap}\n  {p}"
+        registerPremise { id, lits := #[t], concl := p, proof := ← Meta.mkEqMP he h }
+        return
       -- last resort: definitionally equal propositions, the kernel unfolds the difference
       for (_, ap, h) in st.asserts do
         if ← Meta.isDefEq p ap then
           registerPremise { id, lits := #[t], concl := p, proof := h }
           return
       throwError "assumption '{id}' is not an assertion of the problem:\n  {t}"
+
+/-- Bind an assumption, timing it: carcara reports the share of checking spent on `assume`, and
+    within it the share spent comparing terms with `polyeq`. -/
+def runAssume (id : String) (t : cvc5.Term) : AletheM Unit := do
+  let t₀ ← IO.monoNanosNow
+  runAssumeCore id t
+  let t₁ ← IO.monoNanosNow
+  modifyD fun st => { st with stats := { st.stats with
+    assumeNs := st.stats.assumeNs + (t₁ - t₀) } }
 
 /-- Run `k` in the top-level local context (the problem's symbols and the steps so far). -/
 def withTopContext (k : AletheM α) : AletheM α := do
@@ -517,7 +621,10 @@ partial def runAnchor (_id : String) (args : Array (Arg cvc5.Term)) (body : Arra
   let isAssume : Command cvc5.Term → Bool | .assume .. => true | _ => false
   let assumes := body.takeWhile isAssume
   let rest := body.extract assumes.size body.size
-  let (s, e?) ← withScope (fun k => withNewTermCache (withNewProofCache k)) do
+  -- the block's own cost — its variables, its assumptions, the contexts it opens — is the closing
+  -- step's, not the body's; the body's steps are timed one by one
+  let tA ← IO.monoNanosNow
+  let (s, e?, i, t₀, k₀, setup) ← withScope (fun k => withNewTermCache (withNewProofCache k)) do
     withVars args 0 {} fun ctx => do
       let ds ← assumes.mapM fun
         | .assume aid t => do
@@ -533,6 +640,7 @@ partial def runAnchor (_id : String) (args : Array (Arg cvc5.Term)) (body : Arra
           assums := assums.push pr
         withScope (withAssums hs) do
           modifyD fun st => { st with depth := st.depth + 1 }
+          let setup := (← IO.monoNanosNow) - tA
           runCommands rest
           let last ← match rest.back? with
             | some (.step d) => some <$> getPremise d.id
@@ -540,12 +648,17 @@ partial def runAnchor (_id : String) (args : Array (Arg cvc5.Term)) (body : Arra
             | _ => pure none
           modifyD fun st => { st with depth := st.depth - 1 }
           -- the closing step is reconstructed inside the subproof's context (its proof abstracts
-          -- over the local hypotheses) but concluded at the enclosing level
+          -- over the local hypotheses) but concluded at the enclosing level; only its own work is
+          -- timed, the body's steps have records of their own
+          let t₀ ← IO.monoNanosNow
+          let k₀ := (← getD).stats.kernelNs
+          let i ← beginStepTiming close.id (countedRule close.rule close.args)
           let s ← mkStep close (anchor := some { ctx with assums, last })
           let e? ← reconstructStep s
-          return (s, e?)
+          return (s, e?, i, t₀, k₀, setup)
   let e ← concludeStep s e?
   registerPremise { id := close.id, lits := close.cl, concl := s.concl, proof := e }
+  endStepTiming i (setup + (← IO.monoNanosNow) - t₀) k₀
 where
   /-- Introduce the anchor's variables, extending `userNames` with their cvc5 symbols: first every
       kept variable `(x S)` as a free binder, then every substitution `(:= x t)` as a `let`.
@@ -621,6 +734,7 @@ deriving Inhabited
     With `term`, no step is checked on its own; instead the proof term of the statement is
     returned (its trusted steps are the `skippedGoals` of the state). -/
 def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult := do
+  let t₀ ← IO.monoNanosNow
   let asserts := r.problem.asserts
   let as ← asserts.mapM fun t => do
     let p : Q(Prop) ← reconstructTerm t
@@ -633,7 +747,10 @@ def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult :
     let lctx ← getLCtx
     let ref ← IO.mkRef { asserts := asserts.zip (as.zip hs) |>.map fun (t, p, h) => (t, p, h),
                          reconstructors := rs, lctx, baseLctx := lctx,
-                         localInsts := ← Meta.getLocalInstances, term : DState }
+                         localInsts := ← Meta.getLocalInstances, term,
+                         collectSteps := smt.alethe.stats.get (← getOptions) : DState }
+    let setupNs := (← IO.monoNanosNow) - t₀
+    ref.modify fun st => { st with stats := { st.stats with setupNs } }
     runCommands r.proof.cmds ref
     -- steps still waiting for the kernel, and calls still running
     flushBatch ref

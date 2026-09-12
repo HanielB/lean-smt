@@ -104,7 +104,8 @@ scripts/check-alethe.sh problem.smt2 problem.alethe
 -- valid: checked 481 steps, trusted 0, holes 0
 ```
 It accepts the same trailing options as `#check_alethe` (`native`, `lax`,
-`term`, `timings`) and requires `lake build` to have been run once beforehand.
+`term`, `timings`, `--csv <dir>` for the `csv` option below) and requires `lake
+build` to have been run once beforehand.
 `problem.alethe` is expected to already be elaborated by Carcara (see below);
 to check a raw solver proof directly, pass `--elaborate` and the script runs
 it through Carcara first:
@@ -125,6 +126,42 @@ structural rules the checker reconstructs — `semilattice_simp` for `and`/`or`,
 `boolean_group_simp` for `xor`, `assoc_simp` for concatenation, `poly_simp` for the
 ring operators — so list `aci_simp absorb` with the `*_simplify` rules). For veriT
 proofs, add the legacy rules `qnt_cnf ite_intro bfun_elim ac_simp` to `--core-rules`.
+
+### What every step cost
+
+`csv "<dir>"` writes `<dir>/runs.csv` and `<dir>/steps.csv` — the two files
+Carcara's `carcara bench --dump-to-csv` produces, with Carcara's columns in
+Carcara's order, so one analysis reads either checker's output:
+```lean
+#check_alethe "problem.smt2" "problem.alethe" csv "out"
+```
+```
+$ head -3 out/steps.csv
+rule,time,reconstruct,kernel,depth,trusted,step_id
+equiv_pos2,947366,839278,108088,0,0,t0
+rare_rewrite:arith-elim-lt,1558418,1506614,51804,0,0,t1
+```
+Times are nanoseconds. `steps.csv` has one row per step, Carcara's `rule` and
+`time` first and then the columns Carcara has no counterpart for: the split of
+the step between reconstruction and the kernel, its subproof depth, and whether
+it was trusted. The kernel time is the step's own under the default
+`smt.alethe.batch 1`; a larger batch is one kernel call over several steps, and
+its time is split evenly over them (`runs.csv` flags that in `kernel_split`).
+`runs.csv` is the run as a whole — `parsing`, `checking`, `total`, the `assume`
+and `polyeq` shares, and a `setup` column for reconstructing the problem's
+assertions, which belongs to no step and is most of what the rows of
+`steps.csv` do not add up to.
+
+`scripts/rule-boxplots.py` plots them, one series per configuration:
+```
+scripts/rule-boxplots.py --fold-rare -o plots lean-smt:out/lean carcara:out/carcara
+```
+giving `rule-boxplots.pdf` (the distribution of the per-rule step time, log
+scale) and `rule-totals.pdf` (aggregate time per rule). Carcara names every RARE
+step `rare_rewrite` where lean-smt names it `rare_rewrite:<rule>`, hence
+`--fold-rare`; Carcara also has `assume` and `anchor(…)` rows, where lean-smt
+reports binding the assumptions in the `assume` column of `runs.csv` and charges
+opening a subproof to the step that closes it.
 
 Checking a large proof is dominated by the kernel replaying the certificates of
 the arithmetic steps: `poly_simp` and `la_generic` normalize polynomials, and by

@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Check an Alethe proof of an SMT-LIB problem's unsatisfiability from the command line.
 #
-# Usage: scripts/check-alethe.sh [--elaborate] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]
+# Usage: scripts/check-alethe.sh [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe>
+#            [native] [lax] [term] [timings]
+#
+# --csv <dir> writes <dir>/runs.csv and <dir>/steps.csv: what every step cost, in the format
+# carcara's `bench --dump-to-csv` produces. `scripts/rule-boxplots.py <dir> …` plots them.
 #
 # --elaborate first runs the given proof through Carcara (as the `alethe` tactic does, with its
 # default pipeline and core rules) and checks the elaborated result; use it when `<proof.alethe>`
@@ -20,13 +24,17 @@
 set -euo pipefail
 
 elaborate=false
-if [ "${1:-}" = "--elaborate" ]; then
-  elaborate=true
-  shift
-fi
+csv=""
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --elaborate) elaborate=true; shift ;;
+    --csv) csv=$(realpath -m "$2"); shift 2 ;;
+    *) break ;;
+  esac
+done
 
 if [ $# -lt 2 ]; then
-  echo "Usage: $(basename "$0") [--elaborate] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
   exit 1
 fi
 
@@ -83,10 +91,14 @@ if $elaborate; then
 fi
 
 lean_file="$tmp/check.lean"
+csv_clause=""
+if [ -n "$csv" ]; then
+  csv_clause="csv \"$csv\""
+fi
 cat > "$lean_file" <<EOF
 import Smt
 
-#check_alethe "$smt2" "$alethe" $flags
+#check_alethe "$smt2" "$alethe" $flags $csv_clause
 EOF
 
 cd "$repo_root"
