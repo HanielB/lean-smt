@@ -1353,3 +1353,43 @@ against the fallback binary confirms it exactly: **190 `invalid` → `valid`, 9 
 `holey`, nothing left failing**. The 9 are QF_LIA `calypto`, holey only for their `lia_generic`
 steps — veriT's oracle rule, which carries no certificate and which Carcara does not check
 either. So every proof the two `ac_simp` defects were losing is recovered.
+
+## Turn: 2026-09-12 11:50 (session 315b089e) — round five prepared; a hole-producing bug caught first
+
+**The veriT premise was wrong, in our favour.** A static build of
+`~/carcara/wt-corealethe/verit-2026.05` is byte-identical to the binary already deployed at
+`runs/alethe-lean4/bin/veriT` — same size, same BuildID, md5 `fe3d897961fe5e3d1010d70916745ccf`.
+The cluster never ran the 2024 build; that was purely the local `~/verit/veriT`. Round four's
+veriT results stand and veriT needs no re-upload.
+
+**The pre-flight caught a bug that would have wrecked the run** (Carcara `fdef9ecf`). Smoke-testing
+the runner, one QF_LIA proof came back `holey, trusted=1`: an `aci_simp` step in the *elaborated*
+proof, which lean-smt no longer handles since the structural split. But `aci_simp` appears nowhere
+in the input — the core pass **emits** it. `rewrites/mod.rs` renames the non-short-circuiting part
+of `and_simplify`/`or_simplify` to a single AC step, and that rename still produced the legacy
+name; `131f9a1f` fixed the dispatch of legacy steps but missed this emission site, and no warning
+fired because `ac::relabel` was never asked. `and`/`or` are bounded semilattices, so it is
+`semilattice_simp`, picked and validated by the same `ac::structural_rule`. The benchmark goes
+`holey, trusted 1` -> `valid, trusted 0, holes 0`, the elaborated proof still checks in elaborated
+granularity, suite 411. Pre-flight over 18 veriT + 5 cvc5 proofs in five logics: **0 `aci_simp`,
+0 `absorb`**. (Four `error` rows there are sat benchmarks my size-based sampling picked up — the
+runner guards on `unsat` and the cluster uses the `unsat_*` sets, so they cannot occur there.)
+
+**Round five, staged but not submitted.** Over round four only carcara (`20235088` -> `fdef9ecf`)
+and the lean-smt oleans (`3c0b72c`) change; cvc5, veriT, the sets and `rewrites.eo` are the same
+bytes, so the rounds stay comparable. Wall limit 2700 -> 3000 for one new arm.
+
+Runner (`~/exp/alethe-lean/run-arms.sh`), smoke-tested end to end:
+- a **`checkelab`** arm — carcara also checks the *elaborated* proof, so the box plots have a
+  like-for-like carcara series over the same steps the Lean arm sees;
+- `=== stats carcara ===` / `=== stats carcara-elab ===`, the per-rule mean step time;
+- rejected-rule attribution ahead of the 2 KB cap, ANSI stripped. `--no-color` exists but does
+  not cover that error path, so the runner strips rather than trusting the flag. This is the
+  blind spot that left 186 of 199 `ac_simp` rejections unattributed in round four.
+
+`~/exp/alethe-lean/rule-boxplots-round5.py` plots it in the core-rules report's style — the
+distribution over benchmarks of the per-benchmark mean step time, one series per checker side by
+side, plus totals and a tidy `rule-samples.csv`. Validated against real runner output.
+
+Awaiting approval for: the deploy chain, the dry run (with `bash -n` of the submit driver folded
+in, since the guard blocks any command naming it), then the submission.
