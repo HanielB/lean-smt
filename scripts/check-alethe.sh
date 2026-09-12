@@ -10,6 +10,9 @@
 #
 # The trailing words are the `#check_alethe` options (see README.md).
 #
+# The checker runs under a heap cap of $LEAN_MEM MB (default 8000; 0 disables it), so that a
+# large proof cannot exhaust the machine.
+#
 # The wall-clock time is reported at the end, as a `time:` line on stderr, split between the
 # Carcara elaboration (with --elaborate) and the Lean check (which includes starting Lean and
 # importing Smt).
@@ -89,7 +92,13 @@ EOF
 cd "$repo_root"
 t0=$(now)
 status=0
-lake env lean --plugin="$plugin" "$lean_file" || status=$?
+# Cap the checker's heap. A large proof can otherwise take the whole machine down: the kernel
+# holds the step's proof term, and a single resolution over a few hundred premises has been seen
+# to need tens of gigabytes. $LEAN_MEM (MB) overrides; 0 disables the cap.
+lean_mem=${LEAN_MEM:-8000}
+mem_flag=()
+[ "$lean_mem" != 0 ] && mem_flag=(-M "$lean_mem")
+lake env lean "${mem_flag[@]}" --plugin="$plugin" "$lean_file" || status=$?
 lean_time=$(secs "$t0" "$(now)")
 
 if [ -n "$carcara_time" ]; then
