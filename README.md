@@ -105,7 +105,9 @@ scripts/check-alethe.sh problem.smt2 problem.alethe
 ```
 It accepts the same trailing options as `#check_alethe` (`native`, `lax`,
 `term`, `timings`, `--csv <dir>` for the `csv` option below) and requires `lake
-build` to have been run once beforehand.
+build` to have been run once beforehand. It caps the checker's heap at `--mem
+<MB>`, or `$LEAN_MEM`, default 8000, either as 0 for no cap — a large proof can
+otherwise take the machine down, since the kernel holds the step's proof term.
 `problem.alethe` is expected to already be elaborated by Carcara (see below);
 to check a raw solver proof directly, pass `--elaborate` and the script runs
 it through Carcara first:

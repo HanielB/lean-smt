@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Check an Alethe proof of an SMT-LIB problem's unsatisfiability from the command line.
 #
-# Usage: scripts/check-alethe.sh [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe>
-#            [native] [lax] [term] [timings]
+# Usage: scripts/check-alethe.sh [--elaborate] [--csv <dir>] [--mem <MB>] <problem.smt2>
+#            <proof.alethe> [native] [lax] [term] [timings]
 #
-# --elaborate and --csv may appear anywhere among the arguments.
+# The dashed options may appear anywhere among the arguments.
 #
 # --csv <dir> writes <dir>/runs.csv and <dir>/steps.csv: what every step cost, in the format
 # carcara's `bench --dump-to-csv` produces. `scripts/rule-boxplots.py <dir> …` plots them.
@@ -16,8 +16,8 @@
 #
 # The trailing words are the `#check_alethe` options (see README.md).
 #
-# The checker runs under a heap cap of $LEAN_MEM MB (default 8000; 0 disables it), so that a
-# large proof cannot exhaust the machine.
+# The checker runs under a heap cap, so that a large proof cannot exhaust the machine:
+# --mem <MB>, or $LEAN_MEM, default 8000; either as 0 disables the cap.
 #
 # The wall-clock time is reported at the end, as a `time:` line on stderr, split between the
 # Carcara elaboration (with --elaborate) and the Lean check (which includes starting Lean and
@@ -26,7 +26,14 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] [--mem <MB>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+}
+
+# a heap cap in MB, or 0 for none
+check_mem() {
+  case "$1" in
+    ''|*[!0-9]*) echo "error: --mem takes a size in MB, or 0 for no cap: $1" >&2; usage; exit 1 ;;
+  esac
 }
 
 # The dashed options are taken from anywhere in the line, not only before the files: written
@@ -34,6 +41,7 @@ usage() {
 # start of a comment and the option would be silently dropped.
 elaborate=false
 csv=""
+lean_mem=${LEAN_MEM:-8000}
 args=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,6 +50,10 @@ while [ $# -gt 0 ]; do
       if [ $# -lt 2 ]; then echo "error: --csv needs a directory" >&2; usage; exit 1; fi
       csv=$(realpath -m "$2"); shift 2 ;;
     --csv=*) csv=$(realpath -m "${1#--csv=}"); shift ;;
+    --mem)
+      if [ $# -lt 2 ]; then echo "error: --mem needs a size in MB" >&2; usage; exit 1; fi
+      check_mem "$2"; lean_mem=$2; shift 2 ;;
+    --mem=*) check_mem "${1#--mem=}"; lean_mem=${1#--mem=}; shift ;;
     -h|--help) usage; exit 0 ;;
     --) shift; args+=("$@"); break ;;
     -*) echo "error: unknown option: $1" >&2; usage; exit 1 ;;
@@ -132,8 +144,7 @@ t0=$(now)
 status=0
 # Cap the checker's heap. A large proof can otherwise take the whole machine down: the kernel
 # holds the step's proof term, and a single resolution over a few hundred premises has been seen
-# to need tens of gigabytes. $LEAN_MEM (MB) overrides; 0 disables the cap.
-lean_mem=${LEAN_MEM:-8000}
+# to need tens of gigabytes. Set by --mem or $LEAN_MEM above; 0 disables the cap.
 mem_flag=()
 [ "$lean_mem" != 0 ] && mem_flag=(-M "$lean_mem")
 lake env lean "${mem_flag[@]}" --plugin="$plugin" "$lean_file" || status=$?
