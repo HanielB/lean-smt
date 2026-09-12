@@ -812,3 +812,77 @@ Done — and using the right binary changed the outcome materially.
 4/4 go from rejected-at-parse to **fully valid** — so those 653 veriT proofs aren't just parseable now, they check. The report says so explicitly (`b54882c`, still 16 pages).
 
 One thing to flag: `~/talks/talk-quantifiers/verit` is a wrapper script that pointed at the deleted binary, so that talk demo is now broken. I left it alone since it's unrelated to this work — trivial to repoint at the 2026 build if you want.
+
+## Turn: 2026-09-11 22:35:23 (session 315b089e)
+
+Both trees clean. Here's the current picture.
+
+## Fixed since round four — would disappear on a rerun
+
+Round four ran on the pre-fix toolchain, so every holey category it measured except one is now closed:
+
+| what failed | n | fix | confirmed |
+|---|---|---|---|
+| `evaluate` (ground Prop-equalities) | 2 cvc5 | `decideGround` (`eq_iff_iff`+simp) | 27→0 holes on the real benchmark, test |
+| `distinct_elim` (kernel OOM) | 33 veriT | ∧-chain congruence, O(n) not O(n⁴) | flipped n=60: minutes→175 ms, test |
+| `bool_simplify` unreduced | 9 veriT | Carcara `and_mp` recipe (`4bd5e9a9`) | 35/35 reduce, tests |
+| `qnt_rm_unused` over `∃` | 2 veriT | new `∃` handler | real proof valid, test |
+| `onepoint` | 47 SH veriT | general handler | tests |
+| `qnt_simplify`, `bind` | 3 + 8 SH | handlers | tests |
+| **Carcara parser sort errors** | **653 veriT** | polymorphic-position subtyping (`92d8a42f`) | **4/4 real proofs: sort error → valid** |
+
+Suite 141/141. **None of this is measured at corpus scale** — that needs a round five.
+
+## Genuinely open
+
+1. **Scale — by far the dominant residue.** 2,287 (cvc5) + 2,494 (veriT) timeouts and 5 + 64 checker memouts in SMT-LIB. Not a rule gap; the timeouts start around 20,000 elaborated steps. The identified remedy is the reflective resolution checker (`elaboration-opportunities.md` §2), not yet built.
+2. **226 veriT steps Carcara itself rejects** — 24 `and_simplify`, 13 `ac_simp`, 186 "expected terms to be equal" whose rule line falls past the runner's 2,000-byte stderr excerpt (likely the same class), 3 malformed terms. Carcara-side, uninvestigated.
+3. **1 cvc5 Carcara elaboration error** (simplifying a quantified equality). Uninvestigated.
+4. **Carcara's own scale limits on veriT proofs**: 151 exceed its 300 s, 62 exhaust 12 GB, on 130–230 MB proofs.
+5. **`t21`, the chained-renaming `bind`** (1 SH veriT proof): a subproof that both renames a variable and flips an equality via `symm`, which Carcara accepts name-syntactically and which has no consistent reading as terms. Upstream remedy; the α-bind→`refl` pass removed every other instance.
+6. **`beta_equiv` / `ho_cong`** — no Lean handler (they need λ-terms in the reconstruction). Latent rather than active: they appear in the text of 15 cvc5 SMT-LIB proofs but never surfaced as a trusted step in round four, because those proofs didn't reach the checker.
+
+## By design, not failures
+
+- **`lia_generic`** — veriT's oracle rule with no certificate: 252 make Carcara itself report holey, and 10 remain trusted in Lean where they fall outside `omega`'s fragment.
+- **1 genuine `hole`** in a cvc5 Sledgehammer proof.
+- **842 cvc5 / 29 veriT benchmarks with no proof** — the solver was killed mid-print. Now excluded from the table's denominator, since there is nothing to check.
+
+## One action for you
+
+`92d8a42f` (the parser fix) is **unpushed** — origin/bv-fixes is at `131f9a1f`. Everything else is pushed.
+
+The honest summary: rule coverage is effectively complete for the twelve logics in scope, the remaining checker-side residue is *scale*, and the remaining Carcara-side residue is ~230 rejected veriT steps plus its own limits on very large proofs.
+
+## Cross-check against the other evaluations (2026-09-11)
+
+**`~/exp/alethe-core`** (Carcara core-ladder, 25,200 benchmarks per solver, 14 logics,
+`carcara elaborate` with the hoist/polyeq/local/core/core-taut ladder):
+
+| signature | veriT | cvc5 |
+|---|---|---|
+| sort error `expected 'Real', got 'Int'` | **674** (QF_UFLRA 412, QF_LRA 193, QF_RDL 59, **LRA 10**) | 0 |
+| "expected terms to be equal" | 198 | 0 |
+| `and_simplify` rejected | 24 | 0 |
+| `ac_simp` rejected | 13 | 0 |
+| `lia_generic` in the proof | 261 | 0 |
+
+So **the same two Carcara-side failures are there**, independently, at essentially the same
+counts (198/24/13 vs the lean round's 186/24/13 — the same ~230 steps), and the parser defect is
+slightly *broader*: it also hits LRA, a logic the lean rounds do not cover. The parser fix
+`92d8a42f` therefore recovers ~674 proofs there too. cvc5 is clean of all of it in both
+evaluations.
+
+**`~/exp/alethe-bv`** (cvc5 QF_BV/QF_UFBV, `carcara check` only, 24,218 tasks): **none** of these
+failures appear — no sort errors, no rejected steps, no checking failures. But it is the heaviest
+user of the rules I just restructured: `aci_simp` in 19,015 tasks, `absorb` in 16,586 (`ac_simp`
+9,744 in the older `all-bv`). Verified no breakage:
+- it runs `check`, not the core pass, and the legacy checkers were kept — all seven BV AC shapes
+  (absorb bvand/bvor/bvmul, aci_simp bvadd/bvxor/concat/bvand-idem) still check;
+- under the core pass the relabels are structurally right — bvand/bvor absorb and idempotence →
+  `semilattice_simp`, bvmul absorb and bvadd → `poly_simp`, bvxor → `boolean_group_simp`, concat →
+  `assoc_simp` — and `ac::relabel` only relabels after the *target* rule's checker accepts the
+  conclusion, so it cannot turn a checking step into a rejected one.
+
+Caveat: lean-smt's structural handlers cover the Prop operators only (`and`/`or`/`xor`); the
+bitvector instances are out of its scope, as they were before.
