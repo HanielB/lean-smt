@@ -27,6 +27,7 @@ Usage:
                 configuration, drawn as one series; the default label is the path's basename.
 
   -o, --out DIR   where to write the plots (default: plots)
+  -q, --quiet     only warnings: no step counts, no list of what was written
   -n, --top N     rules to show, by total time (default: 25)
   --by {proof,step,auto}
   --title TEXT    replaces the generated title
@@ -144,6 +145,8 @@ def main():
     ap.add_argument('--fold-rare', action='store_true',
                     help="count every rare_rewrite:<rule> as rare_rewrite, as carcara does")
     ap.add_argument('--title', default=None)
+    ap.add_argument('-q', '--quiet', action='store_true',
+                    help='only warnings: no step counts, no list of what was written')
     args = ap.parse_args()
 
     data = load(args.specs, args.fold_rare)
@@ -154,7 +157,8 @@ def main():
 
     for label, proofs in data.items():
         n = sum(len(v) for r in proofs.values() for v in r.values())
-        print(f'{label}: {n} steps over {len(proofs)} proof(s)')
+        if not args.quiet:
+            print(f'{label}: {n} steps over {len(proofs)} proof(s)')
     if not args.fold_rare and len(labels) > 1:
         split = {l for l, ps in data.items()
                  if any(r.startswith('rare_rewrite:') for p in ps.values() for r in p)}
@@ -252,8 +256,9 @@ def main():
         fig.savefig(f'{args.out}/rule-totals.{ext}', dpi=200)
     plt.close(fig)
 
-    print('wrote', ', '.join(f'{args.out}/rule-{n}.{{pdf,png}}'
-                             for n in ('boxplots', 'totals')))
+    if not args.quiet:
+        print('wrote', ', '.join(f'{args.out}/rule-{n}.{{pdf,png}}'
+                                 for n in ('boxplots', 'totals')))
 
 
 if __name__ == '__main__':

@@ -104,10 +104,10 @@ scripts/check-alethe.sh problem.smt2 problem.alethe
 -- valid: checked 481 steps, trusted 0, holes 0
 ```
 It accepts the same trailing options as `#check_alethe` (`native`, `lax`,
-`term`, `timings`, `--csv <dir>` for the `csv` option below) and requires `lake
-build` to have been run once beforehand. It caps the checker's heap at `--mem
-<MB>`, or `$LEAN_MEM`, default 8000, either as 0 for no cap — a large proof can
-otherwise take the machine down, since the kernel holds the step's proof term.
+`term`, `timings`) and requires `lake build` to have been run once beforehand.
+It caps the checker's heap at `--mem <MB>`, or `$LEAN_MEM`, default 8000,
+either as 0 for no cap — a large proof can otherwise take the machine down,
+since the kernel holds the step's proof term.
 `problem.alethe` is expected to already be elaborated by Carcara (see below);
 to check a raw solver proof directly, pass `--elaborate` and the script runs
 it through Carcara first:
@@ -159,9 +159,15 @@ assertions, which belongs to no step and is most of what the rows of
 scripts/rule-boxplots.py --fold-rare -o plots lean-smt:out/lean carcara:out/carcara
 ```
 giving `rule-boxplots.pdf` (the distribution of the per-rule step time, log
-scale) and `rule-totals.pdf` (aggregate time per rule). Carcara names every RARE
-step `rare_rewrite` where lean-smt names it `rare_rewrite:<rule>`, hence
-`--fold-rare`; Carcara also has `assume` and `anchor(…)` rows, where lean-smt
+scale) and `rule-totals.pdf` (aggregate time per rule). For a single proof
+`scripts/check-alethe.sh --plots` does both halves at once: it makes a directory
+in the current one named after the proof — its basename without the `.alethe`
+and `.smt2` extensions — and leaves the two CSVs and the two plots in it
+(matplotlib required).
+
+Carcara names every RARE step `rare_rewrite` where lean-smt names it
+`rare_rewrite:<rule>`, hence `--fold-rare`; Carcara also has `assume` and
+`anchor(…)` rows, where lean-smt
 reports binding the assumptions in the `assume` column of `runs.csv` and charges
 opening a subproof to the step that closes it.
 

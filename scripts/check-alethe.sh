@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Check an Alethe proof of an SMT-LIB problem's unsatisfiability from the command line.
 #
-# Usage: scripts/check-alethe.sh [--elaborate] [--csv <dir>] [--mem <MB>] <problem.smt2>
+# Usage: scripts/check-alethe.sh [--elaborate] [--plots] [--mem <MB>] <problem.smt2>
 #            <proof.alethe> [native] [lax] [term] [timings]
 #
 # The dashed options may appear anywhere among the arguments.
 #
-# --csv <dir> writes <dir>/runs.csv and <dir>/steps.csv: what every step cost, in the format
-# carcara's `bench --dump-to-csv` produces. `scripts/rule-boxplots.py <dir> …` plots them.
+# --plots collects what every step cost and plots it. It makes a directory in the current one
+# named after the given proof — its basename, without the `.alethe` and `.smt2` extensions —
+# and writes there `runs.csv` and `steps.csv` (the format carcara's `bench --dump-to-csv`
+# produces) and then, from those, the plots `scripts/rule-boxplots.py` draws:
+# `rule-boxplots.pdf/.png`, the distribution of the per-rule step time, and
+# `rule-totals.pdf/.png`, the aggregate time per rule. Plotting needs matplotlib.
 #
 # --elaborate first runs the given proof through Carcara (as the `alethe` tactic does, with its
 # default pipeline and core rules) and checks the elaborated result; use it when `<proof.alethe>`
@@ -26,7 +30,7 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] [--mem <MB>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+  echo "Usage: $(basename "$0") [--elaborate] [--plots] [--mem <MB>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
 }
 
 # a heap cap in MB, or 0 for none
@@ -40,16 +44,13 @@ check_mem() {
 # after them they would end up among the `#check_alethe` words, where Lean reads `--` as the
 # start of a comment and the option would be silently dropped.
 elaborate=false
-csv=""
+plots=false
 lean_mem=${LEAN_MEM:-8000}
 args=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --elaborate) elaborate=true; shift ;;
-    --csv)
-      if [ $# -lt 2 ]; then echo "error: --csv needs a directory" >&2; usage; exit 1; fi
-      csv=$(realpath -m "$2"); shift 2 ;;
-    --csv=*) csv=$(realpath -m "${1#--csv=}"); shift ;;
+    --plots) plots=true; shift ;;
     --mem)
       if [ $# -lt 2 ]; then echo "error: --mem needs a size in MB" >&2; usage; exit 1; fi
       check_mem "$2"; lean_mem=$2; shift 2 ;;
@@ -69,7 +70,7 @@ fi
 
 smt2=$(realpath "$1")
 alethe=$(realpath "$2")
-given_alethe=$alethe   # what --csv should name, even when --elaborate checks a derived file
+given_alethe=$alethe   # what the CSV should name, even when --elaborate checks a derived file
 shift 2
 flags="$*"
 
@@ -87,6 +88,31 @@ for f in "$smt2" "$alethe"; do
     exit 1
   fi
 done
+
+# --plots gathers everything about this run in one directory next to where the script was
+# called, named after the proof: the two CSVs the checker writes and the plots drawn from them.
+out_dir=""
+python=${PYTHON:-python3}
+if $plots; then
+  # Just the file name, and without the extensions: a proof is usually `<problem>.smt2.alethe`
+  # beside the `<problem>.smt2` it is about, and either name would collide with one of them when
+  # the script is run from the directory holding them.
+  name=$(basename "$given_alethe")
+  name=${name%.alethe}
+  name=${name%.smt2}
+  out_dir="$PWD/${name:-plots}"
+  if [ -e "$out_dir" ] && [ ! -d "$out_dir" ]; then
+    echo "error: $out_dir exists and is not a directory" >&2
+    exit 1
+  fi
+  # fail now rather than after the check: the plots are why the run was asked for
+  if ! "$python" -c 'import matplotlib' 2>/dev/null; then
+    echo "error: --plots needs matplotlib for \`$python\` (\$PYTHON overrides it); install it" >&2
+    echo "       with your package manager (python3-matplotlib) or in a virtualenv" >&2
+    exit 1
+  fi
+  mkdir -p "$out_dir"
+fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 plugin="$repo_root/.lake/packages/cvc5/.lake/build/lib/libcvc5_cvc5.so"
@@ -130,8 +156,8 @@ fi
 
 lean_file="$tmp/check.lean"
 csv_clause=""
-if [ -n "$csv" ]; then
-  csv_clause="csv \"$csv\""
+if [ -n "$out_dir" ]; then
+  csv_clause="csv \"$out_dir\""
 fi
 cat > "$lean_file" <<EOF
 import Smt
@@ -153,9 +179,23 @@ lean_time=$(secs "$t0" "$(now)")
 # The proof the checker was handed under --elaborate is a temp file, and it is that path the
 # checker records. Name the run after the proof this script was given instead, which is the one
 # the row is about — and the only name that tells two benchmarks' rows apart.
-if [ -n "$csv" ] && [ "$alethe" != "$given_alethe" ] && [ -s "$csv/runs.csv" ]; then
+if [ -n "$out_dir" ] && [ "$alethe" != "$given_alethe" ] && [ -s "$out_dir/runs.csv" ]; then
   awk -v p="$given_alethe" 'BEGIN { FS = OFS = "," } NR == 2 { $1 = p } { print }' \
-      "$csv/runs.csv" > "$csv/runs.csv.new" && mv "$csv/runs.csv.new" "$csv/runs.csv"
+      "$out_dir/runs.csv" > "$out_dir/runs.csv.new" && mv "$out_dir/runs.csv.new" "$out_dir/runs.csv"
+fi
+
+# The plots go beside the CSVs they come from. A check that gave up part way still wrote the
+# steps it did get through, so draw them whatever the checker's verdict was.
+if $plots; then
+  if [ -s "$out_dir/steps.csv" ]; then
+    if "$python" "$repo_root/scripts/rule-boxplots.py" --quiet -o "$out_dir" "$out_dir"; then
+      echo "plots: $out_dir (runs.csv, steps.csv, rule-boxplots, rule-totals)" >&2
+    else
+      echo "warning: could not plot $out_dir/steps.csv" >&2
+    fi
+  else
+    echo "warning: no steps recorded in $out_dir, nothing to plot" >&2
+  fi
 fi
 
 if [ -n "$carcara_time" ]; then

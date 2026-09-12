@@ -44,8 +44,6 @@ syntax (name := checkAletheCmd) "#check_alethe " str str (&"native")? (&"lax")? 
       for (l, ms) in r.timings do
         msg := msg ++ m!"\n[time] {l}: {ms} ms"
       msg := msg ++ m!"\n[time] total: {t₁ - t₀} ms"
-    if let some dir := csv then
-      msg := msg ++ m!"\n[csv] {dir}/runs.csv, {dir}/steps.csv: {r.stats.steps.size} steps"
     logInfo msg
     trace[smt.alethe] "statement: {r.type}"
 
