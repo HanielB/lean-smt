@@ -726,3 +726,68 @@ but *not* for the polymorphic positions where the sorts merely have to agree: `=
 added; whole Carcara suite green (125+221+28+17+13+3+1+1). Static binary rebuilt; setup pin →
 `92d8a42f`. Note the local veriT (2024.12.1) crashes on these LassoRanker benchmarks with an
 internal assert, so the corpus-level confirmation has to wait for a rerun.
+
+## Turn: 2026-09-11 22:12:44 (session 315b089e)
+
+Both done — and the second question turned up a real bug.
+
+## 1. `unsat` → `proof` (controlled for proof production)
+
+The column now counts benchmarks where the solver **produced a proof of the empty clause**. I used the runner's `proof_bytes > 0`, and verified it's a sound proxy: there is no task with `solver_rc = 0` and an empty proof, so every counted proof came from a solver that exited cleanly.
+
+| | unsat | **with proof** | Carcara |
+|---|---|---|---|
+| cvc5 SMT-LIB | 20,037 | **19,195** | 19,194 |
+| veriT SMT-LIB | 19,196 | **19,167** | 17,823 |
+| Sledgehammer | 2,869 / 2,681 | unchanged | 2,868 / 2,598 |
+
+This changes the story completely for cvc5: **Carcara accepts 19,194 of 19,195 — the gap is one elaboration error**, not 843. The 842 were benchmarks killed mid-print (`solver_rc=134`), i.e. no proof existed to check.
+
+## 2. Yes, it came up before — and it was mis-attributed
+
+I scanned every past round for the signature:
+
+| round | sort-error tasks |
+|---|---|
+| cvc5 (all rounds) | **0** |
+| verit round 2 | **194** (all QF_LRA) |
+| verit round 4 | 653 (QF_UFLRA 412, QF_LRA 192, QF_RDL 49) |
+| verit Sledgehammer | 3 |
+
+So round two already had essentially the same 192–194 QF_LRA cases. Round four only *exposes more* because it adds the real-arithmetic logics. And the previous report text claimed the arithmetic rejections were "almost entirely veriT's `lia_generic`" — that was wrong.
+
+**Root cause, found and fixed** (`92d8a42f`): `--allow-int-real-subtyping` was consulted for operators whose argument sorts are fixed and numeric (`+ - * /`, `abs`, the order comparisons) but **not** for the *polymorphic* positions where sorts merely have to agree — `=`/`distinct` (via `check_sort_all_eq`), `ite`'s branches, and uninterpreted-function arguments (`make_app`). veriT writes an integer literal on one side of an equality with a Real term, so the proof died at parse time.
+
+Minimal repro, decisive:
+```
+(= x 0)  with x : Real, flag on  →  sort error: expected 'Real', got 'Int'
+(< x 0)  same setting            →  accepted
+```
+Fixed with `check_sort_eq_poly`/`check_sort_all_eq_poly` at exactly those three sites. `div`, `mod`, `to_int` stay strict (`(div 1.0 2.0)` still rejected), and nothing changes with the flag off. Parser regression test added; **whole Carcara suite green**; static binary rebuilt; setup pin → `92d8a42f`.
+
+One caveat: my local veriT (2024.12.1) crashes with an internal assertion on these LassoRanker benchmarks, so I could only confirm the fix on the minimal reproductions and the test suite — corpus-level confirmation needs a rerun.
+
+Report rebuilt at 16 pages, no undefined references (`eee2b4d`).
+
+## veriT 2026.05, and the parser fix confirmed on real proofs (2026-09-11)
+
+Was using the wrong local binary: `~/verit/veriT` (2024.12.1-3-gbaa0e77), which **aborts with an
+internal assertion** (`Assert (DAG_attr.sort[src]) == (DAG_attr.sort[dest])`) on the QF_LRA
+LassoRanker benchmarks — which is why "cannot reproduce locally" kept coming up. Deleted it at the
+user's request; the local veriT is now `~/carcara/wt-corealethe/verit-2026.05/veriT` (2026.05, the
+generation the cluster runs). Noted in memory. Side effect: `~/talks/talk-quantifiers/verit` is a
+wrapper script that pointed at the deleted binary and is now broken (pre-existing demo, untouched).
+
+With the 2026 build the parser fix is **confirmed end to end on real proofs**, not just minimal
+repros. Generated proofs for four LassoRanker benchmarks from the failing families and A/B'd
+against a pre-fix Carcara (built by reverting `92d8a42f` in a scratch build, tree restored after):
+
+| benchmark | pre-fix | fixed |
+|---|---|---|
+| efegp.t2.c_Iteration1_Lasso_3-pieceTemplate | sort error: expected 'Real', got 'Int' | **valid** |
+| disj_nightmare.t2.c_Iteration1_Loop_7-phaseTemplate | sort error | **valid** |
+| agafp.t2.c_Iteration1_Lasso_4-pieceTemplate | sort error | **valid** |
+| heidy7-simple.t2.c_Iteration2_Lasso_4-pieceTemplate | sort error | **valid** |
+
+4/4 go from rejected-at-parse to fully valid. Report updated to say the affected families now
+check valid rather than merely parse.

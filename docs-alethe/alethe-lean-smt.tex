@@ -545,7 +545,8 @@ QF\_UFLRA's \texttt{mathsat}, 95 and 85 in QF\_LRA's \texttt{meti-tarski} and
 appeared in the earlier three-logic round, on 194 QF\_LRA proofs, where it had
 been mistaken for \rulename{lia\_generic} residue; it is now fixed, confined
 to those three polymorphic positions so that \texttt{(div 1.0 2.0)} is still
-rejected. Of the remaining 691: 226 are steps \carcara's own checker rejects
+rejected, and proofs of the affected families that the parser turned away now
+check (\emph{valid}, not merely parseable). Of the remaining 691: 226 are steps \carcara's own checker rejects
 (the identifiable ones 24 \rulename{and\_simplify} and 13
 \rulename{ac\_simp}); 252 are holey, all \verit's oracle rule
 \rulename{lia\_generic}, which carries no certificate and which \carcara does
