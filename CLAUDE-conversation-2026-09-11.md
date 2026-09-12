@@ -593,3 +593,66 @@ plots from `~/exp/alethe-lean/plots-round4.py`; per-step-vs-one-term comparison 
 section (plus a native paragraph); rules section describes the structural rules and the
 annihilator/parity normalizers; Carcara section lists budget, α-bind→refl, structural rules,
 bool_simplify fix. Counts refreshed (96 rules, ~4,900 lines, 52 lemmas).
+
+## Turn: 2026-09-11 18:16:50 (session 315b089e)
+
+All done — everything committed and the tree is clean. Here's the full picture.
+
+## The four structural rules — implemented in both tools
+
+**Carcara (`131f9a1f`)** — three new checkers, each with exactly its operators' normal form:
+
+| rule | operators | normal form |
+|---|---|---|
+| `semilattice_simp` | `and or bvand bvor` | set; collapses to the annihilator when it occurs (`absorb`'s law folded in) |
+| `boolean_group_simp` | `xor bvxor` | parity (odd multiplicity; `x⊕x` cancels) |
+| `assoc_simp` | `concat str.++` | sequence |
+| `poly_simp` | `+ * bvadd bvmul` (+ `ff.*`) | existing polynomial form |
+
+The core pass **translates the legacy names**: `aci_simp`/`absorb` are relabeled to the structural rule of their operator (after that rule's checker accepts the conclusion), and the per-layer steps of nested `ac_simp`, `shuffle` and `nary_elim` are emitted as structural rules — so no legacy AC name survives it. All 221 rule tests + new core-translation tests green; static binary rebuilt.
+
+**lean-smt (`82bc238`)** — reconstructs **only `poly_simp` + the three structural rules**; the `ac_simp`/`aci_simp`/`absorb` handlers are gone. The reflective `AciNorm` gained two things: the **annihilator** (`Tree.absorb`, `bits : Tree → Option Nat`, so `(and … false …) = false` is kernel-evaluated), and a **parity normalizer** for `boolean_group_simp` (bitset folded with `Nat.xor`; soundness via `parity` over bit positions with the interchange law — the whole module compiled first try). Eight test proofs relabeled and re-validated; two new tests. **Suite 141/141.**
+
+## Status of the mechanization after round four
+
+Round four (twelve logics, 23,328 benchmarks per solver) finished for **both** solvers:
+
+| | unsat | Carcara | **lean-smt valid** | timeout | holey |
+|---|---|---|---|---|---|
+| cvc5 | 20,037 | 19,194 | **16,853** | 2,287 | 2 |
+| veriT | 19,196 | 17,823 | **15,334** | 2,494 | 54 |
+
+Rule coverage is essentially complete: the quantified and arithmetic logics are ~99%, and what's left is **scale** (timeouts on the huge QF_UF/QF_IDL proofs). Every holey category except veriT's oracle `lia_generic` is fixed since the run — `evaluate` (2), `distinct_elim` (33), `bool_simplify` (9), `qnt_rm_unused` (2) — each with a regression test. Sledgehammer stays at 99.7% / 97.0% with its residue fixed too. Native buys only +23/+9 proofs — the kernel's time is in the resolution chains, not the normalizers.
+
+## Report (`docs-alethe/alethe-lean-smt.pdf`, 15 pages, `e7ad26e`)
+
+Restructured as you asked: the Evaluation now compares just the **four configurations** on SMT-LIB round four (per-logic table) and Sledgehammer, with the **four Carcara-vs-lean-smt scatter plots** (SMT-LIB and SH × cvc5/veriT) plus four-configuration cactus curves; the **per-step vs one-term** material is a separate final section (with a native paragraph). Rules/Carcara sections describe the structural rules and normalizers; counts refreshed.
+
+Two loose ends for you: **push Carcara** (`git -C ~/carcara/wt-diff push` — `131f9a1f` and its predecessors are unpushed), and note that a **round five** would be needed to see the post-fix numbers at corpus scale — round four ran on the pre-fix toolchain.
+
+## Why Carcara does not check every unsat proof; memouts and slowdown in the report (2026-09-11)
+
+**The Table-1 gap, measured** (unsat but not Carcara-valid): cvc5 843, veriT 1,373.
+- cvc5: **842 of 843 have no proof to check** — the solver answered unsat inside its 120 s
+  internal `--tlimit` but was killed by the 150 s external timeout while *printing* the proof
+  (solver_rc=134, proof_bytes=0). 1 elaboration error. So essentially none of it is Carcara.
+- veriT: 653 Carcara **parser** errors ("expected Real, got Int" despite
+  `--allow-int-real-subtyping`; QF_UFLRA/mathsat 409, QF_LRA/meti-tarski 95, LassoRanker 85,
+  QF_RDL/sal 47) + 226 rejected steps (and_simplify 24, ac_simp 13, rest past the stderr excerpt)
+  + 252 holey (all `lia_generic`, no certificate) + 151 Carcara-check timeouts (130–230 MB proofs)
+  + 62 memory kills during check/elaborate + 29 no-proof. Only the 653 + 226 are Carcara's to fix.
+
+**Memouts.** First attribution attempt was wrong: task-level `terminationreason=memory` never lands
+on the checker (all in solve/carcara/elab phases — verit-4: 46 solve, 68 check/elab, 84 elab). The
+real checker memouts are the lean arm erroring with a memory message: cvc5 5, veriT 64 (SMT-LIB);
+cvc5 0, veriT 21 (SH). Added as a `mem` column to both tables.
+
+**Slowdown on commonly checked benchmarks** (both Carcara and lean-smt valid), elaboration
+included: SMT-LIB cvc5 **213×** median over 12,773 (geomean 189×, p90 435×), veriT **497×** over
+9,148 (geomean 516×, p90 1,184×); SH cvc5 234× over 2,843, veriT 483× over 2,414. Elaboration is
+negligible (check-only medians 212/495/232/482). Per-logic column added to Table 1 — smallest
+where proofs are largest (QF_UF 135× vs UF 369×), because the checker's fixed ~5 s library load
+dominates on small proofs.
+
+Table 1 transposed to solver-major (multirow) to fit the two new columns in llncs width. Report
+now 16 pages, no undefined references.
