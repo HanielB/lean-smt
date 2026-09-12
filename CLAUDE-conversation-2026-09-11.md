@@ -656,3 +656,73 @@ dominates on small proofs.
 
 Table 1 transposed to solver-major (multirow) to fit the two new columns in llncs width. Report
 now 16 pages, no undefined references.
+
+## Turn: 2026-09-11 21:59:08 (session 315b089e)
+
+Committed (`cba7dd3`, report now 16 pages). Here's the answer to your question, and the two additions.
+
+## Why Carcara doesn't check every unsat proof
+
+I measured it rather than guessed. The gap is **843** (cvc5) and **1,373** (veriT) — and for cvc5 it's essentially *not Carcara at all*:
+
+**cvc5 — 842 of 843 have no proof to check.** The solver answered `unsat` inside its 120 s internal `--tlimit`, then was killed by the 150 s external timeout *while printing the proof*: `solver_rc=134`, `solver_time≈120 s`, `proof_bytes=0`. The runner records `no-proof`. Only 1 is a genuine elaboration error. So the unsat→Carcara drop for cvc5 measures proof *production*, not proof checking.
+
+**veriT — 1,373, five causes:**
+
+| n | cause |
+|---|---|
+| 653 | Carcara **parser** errors: "expected `Real`, got `Int`" on the proof text, *even with* `--allow-int-real-subtyping`. Concentrated in a few families: QF_UFLRA/`mathsat` 409, QF_LRA/`meti-tarski` 95 and `LassoRanker` 85, QF_RDL/`sal` 47 |
+| 226 | steps Carcara's own checker rejects (identifiable: `and_simplify` 24, `ac_simp` 13; the rest have their rule line past the 2000-byte stderr excerpt the runner keeps) |
+| 252 | holey — all `lia_generic`, veriT's oracle rule, which carries no certificate and which Carcara doesn't check either |
+| 151 | Carcara's own 300 s check limit, on proofs of 130–230 MB |
+| 62 | 12 GB exhausted during the check or elaboration |
+| 29 | no proof (veriT killed at 150 s) |
+
+So only the **653 parser errors + 226 rejected steps** are Carcara's to close, and the parser errors look like one defect in the integer/real subtyping of veriT's proof text. (I tried to reproduce that locally, but my local veriT is a different version and crashes on the sample benchmark with an internal assertion, so it's characterised from the cluster logs only.)
+
+## Memouts
+
+My first attribution was wrong and I corrected it: task-level `terminationreason=memory` **never** lands on the checker — those kills all happen during solving (46), Carcara's check/elaborate (68), or elaboration (84). The real checker memouts are the lean arm failing with a memory error: **5** (cvc5) and **64** (veriT) in SMT-LIB, **0** and **21** in Sledgehammer. Both tables now have a `mem` column.
+
+## Slowdown on commonly checked benchmarks
+
+On the proofs *both* validate, with elaboration counted on the checker's side:
+
+| corpus | solver | common | median | geomean | p90 |
+|---|---|---|---|---|---|
+| SMT-LIB | cvc5 | 12,773 | **213×** | 189× | 435× |
+| SMT-LIB | veriT | 9,148 | **497×** | 516× | 1,184× |
+| Sledgehammer | cvc5 | 2,843 | **234×** | 234× | 409× |
+| Sledgehammer | veriT | 2,414 | **483×** | 470× | 580× |
+
+Elaboration is not the cost (check-only medians: 212/495/232/482). The per-logic factors are now the last column of Table 1, and they're counter-intuitive in a way worth noting: the slowdown is **smallest where proofs are largest** (QF_UF 135× vs UF 369×), because the checker's fixed ~5 s library load dominates on the small proofs while Carcara is nearly free there.
+
+Table 1 is transposed to solver-major (multirow) so the two new columns fit the llncs text width.
+
+## unsat column controlled for proof production; the veriT sort errors root-caused (2026-09-11)
+
+**"unsat" → "proof".** The table's population is now the benchmarks for which the solver produced
+a proof of the empty clause (`proof_bytes>0`, which the runner only sets when the solver exited 0,
+so the proof is complete). cvc5 20,037 unsat → **19,195 with a proof** (842 killed mid-print,
+solver_rc=134); veriT 19,196 → **19,167** (29 killed, rc=124). Sledgehammer unchanged. With that
+denominator the cvc5 story is sharp: Carcara accepts **19,194 of 19,195** — the gap is *one*
+elaboration error, not 843.
+
+**The veriT sort errors: yes, they came up before, and they were mis-attributed.** Scanning every
+past round for the signature: verit-2 (round two, three logics) already had **194 QF_LRA** cases;
+round four has 653 because it adds the real-arithmetic logics (QF_UFLRA/mathsat 412, QF_LRA 192,
+QF_RDL 49); verit-seventeen has 3. cvc5 rounds: zero, in all of them. The old report text had
+claimed the arithmetic rejections were "almost entirely veriT's lia_generic" — wrong.
+
+**Root cause found and fixed** (Carcara `92d8a42f`). `--allow-int-real-subtyping` was consulted for
+the operators whose argument sorts are fixed and numeric (`+ - * /`, `abs`, the order comparisons)
+but *not* for the polymorphic positions where the sorts merely have to agree: `=`/`distinct` (via
+`check_sort_all_eq`), the two branches of `ite`, and the arguments of an uninterpreted function
+(`make_app`). veriT writes an integer literal on one side of an equality with a Real-sorted term →
+"sort error: expected 'Real', got 'Int'" at parse time, killing the whole proof. Minimal repro:
+`(= x 0)` with `x : Real` fails while `(< x 0)` passes. Fixed with `check_sort_eq_poly` /
+`check_sort_all_eq_poly` at exactly those three sites; `div`/`mod`/`to_int` stay strict
+(`(div 1.0 2.0)` still rejected) and nothing changes with the flag off. Parser regression test
+added; whole Carcara suite green (125+221+28+17+13+3+1+1). Static binary rebuilt; setup pin →
+`92d8a42f`. Note the local veriT (2024.12.1) crashes on these LassoRanker benchmarks with an
+internal assert, so the corpus-level confirmation has to wait for a rerun.

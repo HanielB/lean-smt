@@ -502,52 +502,68 @@ of the twelve logics in the checker's scope --- QF\_UF, QF\_IDL, QF\_RDL,
 QF\_LIA, QF\_LRA, QF\_UFIDL, QF\_UFLIA, QF\_UFLRA, UF, UFIDL, UFLIA and UFLRA
 --- as the SMT-LIB 2025 catalog lists them: 23\,328 per solver.
 
-\paragraph{Outcomes.} Table~\ref{tab:smtlib} gives the round per logic.
-\cvcv proves 20\,037 benchmarks unsatisfiable and \verit 19\,196; \carcara
-accepts 19\,194 and 17\,823 of the proofs, and the checker validates 16\,853
-and 15\,334. Of the proofs the checker does not validate, 2\,287 and 2\,494
-are timeouts, 5 and 64 exhaust its memory, and 2 and 54 have a trusted step.
-The columns are independent verdicts on the same benchmark, not a partition:
-the checker validates more QF\_UFLIA \verit proofs than \carcara accepts,
-because \carcara reports a proof with a \rulename{lia\_generic} step holey
-while the checker closes that step with \texttt{omega}. The picture per logic
-is uneven in an informative way: the quantified logics and the arithmetic ones
-are nearly complete (99\% of UF, UFLIA, QF\_LIA), while QF\_UF, whose proofs
-are an order of magnitude larger, is at 59\%, and QF\_IDL, whose
-bounded-model-checking proofs are large too, at 58\% and 41\%.
+\paragraph{Outcomes.} Table~\ref{tab:smtlib} gives the round per logic. The
+population both checkers see is the benchmarks for which the solver produced a
+proof of the empty clause: \cvcv answers unsatisfiable on 20\,037 benchmarks
+but finishes printing the proof for 19\,195 of them, and \verit on 19\,196 and
+19\,167 --- the difference is the solver being killed mid-print, and counting
+it against the checkers would be counting a proof that does not exist.
+\carcara accepts 19\,194 and 17\,823 of those proofs, and the checker
+validates 16\,853 and 15\,334. Of the proofs the checker does not validate,
+2\,287 and 2\,494 are timeouts, 5 and 64 exhaust its memory, and 2 and 54 have
+a trusted step. The checker's columns are independent verdicts on the same
+benchmark, not a partition: the checker validates more QF\_UFLIA \verit proofs
+than \carcara accepts, because \carcara reports a proof with a
+\rulename{lia\_generic} step holey while the checker closes that step with
+\texttt{omega}. The picture per logic is uneven in an informative way: the
+quantified logics and the arithmetic ones are nearly complete (99\% of UF,
+UFLIA, QF\_LIA), while QF\_UF, whose proofs are an order of magnitude larger,
+is at 59\%, and QF\_IDL, whose bounded-model-checking proofs are large too, at
+58\% and 41\%.
 
-\paragraph{Why \carcara does not check every proof.} The gap between
-\emph{unsat} and \emph{\carcara} in Table~\ref{tab:smtlib} --- 843 benchmarks
-for \cvcv and 1\,373 for \verit --- is almost entirely outside \carcara. For
-\cvcv, 842 of the 843 are benchmarks for which \emph{no proof exists to
-check}: the solver answered unsatisfiable within its 120\,s internal limit but
-was killed by the 150\,s external one while printing the proof, leaving an
-empty file. Only one is an elaboration error. For \verit the 1\,373 split five
-ways: 653 are \carcara \emph{parser} errors, all of the form ``expected
-\texttt{Real}, got \texttt{Int}'' on the proof text even under
-\texttt{-{}-allow-int-real-subtyping}, concentrated in a few families (409 in
+\paragraph{Why \carcara does not check every proof.} On this population the
+question has a sharp answer for \cvcv: \carcara accepts 19\,194 of the 19\,195
+proofs, and the one it does not is an elaboration error. The 842 benchmarks
+that separate \emph{unsat} from \emph{proof} are not \carcara's --- the solver
+answered within its 120\,s internal limit and was killed by the 150\,s
+external one while printing, leaving an empty file.
+
+For \verit the gap is 1\,344 proofs, and it splits five ways. The largest part,
+653, was a \carcara \emph{parser} defect that this round localized: the
+\texttt{-{}-allow-int-\allowbreak real-\allowbreak subtyping} flag was
+consulted for the operators
+whose argument sorts are fixed and numeric (\texttt{+}, \texttt{*},
+\texttt{/}, the order comparisons) but not for the positions where the sorts
+are merely required to agree --- the arguments of \texttt{=} and
+\texttt{distinct}, the branches of an \texttt{ite}, and the arguments of an
+uninterpreted function. \verit writes an integer literal on one side of an
+equality with a real-sorted term, so those proofs were rejected before
+checking began with \emph{sort error: expected `Real', got `Int'}, which is
+why the affected benchmarks are exactly the real-arithmetic families (409 in
 QF\_UFLRA's \texttt{mathsat}, 95 and 85 in QF\_LRA's \texttt{meti-tarski} and
-\texttt{LassoRanker}, 47 in QF\_RDL's \texttt{sal}); 226 are steps \carcara's
-own checker rejects, of which the identifiable ones are 24
-\rulename{and\_simplify} and 13 \rulename{ac\_simp}; 252 are holey, all
-\verit's oracle rule \rulename{lia\_generic}, which carries no certificate and
-which \carcara does not check either; 151 exceed \carcara's own 300\,s limit,
-on proofs of 130 to 230\,MB; 62 exhaust the 12\,GB during the check or the
-elaboration; and 29 have no proof, \verit having been killed at 150\,s. So of
-the whole gap only the 653 parser errors and the 226 rejected steps are
-\carcara's to close, and the parser errors are a single defect in the
-integer/real subtyping of \verit's proof text.
+\texttt{LassoRanker}, 47 in QF\_RDL's \texttt{sal}). The same defect had
+appeared in the earlier three-logic round, on 194 QF\_LRA proofs, where it had
+been mistaken for \rulename{lia\_generic} residue; it is now fixed, confined
+to those three polymorphic positions so that \texttt{(div 1.0 2.0)} is still
+rejected. Of the remaining 691: 226 are steps \carcara's own checker rejects
+(the identifiable ones 24 \rulename{and\_simplify} and 13
+\rulename{ac\_simp}); 252 are holey, all \verit's oracle rule
+\rulename{lia\_generic}, which carries no certificate and which \carcara does
+not check either; 151 exceed \carcara's own 300\,s limit, on proofs of 130 to
+230\,MB; and 62 exhaust the 12\,GB during the check or the elaboration.
 
 \begin{table}[p]
   \centering
-  \caption{The SMT-LIB round, 23\,328 benchmarks per solver. \emph{unsat} is
-    what the solver proved; \carcara the proofs it accepts; then the checker's
-    outcomes --- proofs validated with no trusted step, timeouts, runs that
-    exhausted its 10\,GB, and proofs with a trusted step (\emph{holey}). The
-    columns are independent verdicts on the same benchmark, so the checker's
-    do not sum to \carcara's. The last column is the median factor by which
-    the checker, elaboration included, is slower than \carcara on the
-    benchmarks \emph{both} validate.}
+  \caption{The SMT-LIB round, 23\,328 benchmarks per solver. \emph{proof} counts
+    the benchmarks for which the solver produced a proof of the empty clause ---
+    it answered unsatisfiable \emph{and} finished printing the proof within its
+    limits, which is the population the two checkers see; \carcara the proofs it
+    accepts; then the checker's outcomes --- proofs validated with no trusted
+    step, timeouts, runs that exhausted its 10\,GB, and proofs with a trusted
+    step (\emph{holey}). The checker's columns are independent verdicts, so they
+    do not sum to \carcara's. The last column is the median factor by which the
+    checker, elaboration included, is slower than \carcara on the benchmarks
+    \emph{both} validate.}
   \label{tab:smtlib}
   \small
   \setlength{\tabcolsep}{2.6pt}
@@ -555,31 +571,31 @@ integer/real subtyping of \verit's proof text.
     \toprule
     & & & & & \multicolumn{4}{c}{\tactic} & \\
     \cmidrule(lr){6-9}
-    solver & logic & bench. & unsat & \carcara & valid & t/o & mem & holey & slower \\
+    solver & logic & bench. & proof & \carcara & valid & t/o & mem & holey & slower \\
     \midrule
     \multirow{13}{*}{\cvcv}
-      & QF\_UF    & 4\,361 & 4\,324 & 4\,296 & 2\,527 & 1\,763 & 3 & 0 & 135$\times$ \\
-      & QF\_IDL   &    917 &    633 &    475 &    276 &    196 & 0 & 2 &  75$\times$ \\
-      & QF\_RDL   &    113 &     88 &     74 &     39 &     35 & 0 & 0 & 120$\times$ \\
-      & QF\_LIA   & 4\,748 & 2\,794 & 2\,511 & 2\,341 &    152 & 0 & 0 & 221$\times$ \\
-      & QF\_LRA   &    703 &    582 &    526 &    425 &    101 & 0 & 0 &  86$\times$ \\
-      & QF\_UFIDL &    422 &    268 &     38 &     30 &      8 & 0 & 0 &   2$\times$ \\
-      & QF\_UFLIA &    192 &    174 &    172 &    166 &      4 & 0 & 0 & 222$\times$ \\
-      & QF\_UFLRA &    511 &    511 &    441 &    432 &      9 & 0 & 0 &  26$\times$ \\
+      & QF\_UF    & 4\,361 & 4\,296 & 4\,296 & 2\,527 & 1\,763 & 3 & 0 & 135$\times$ \\
+      & QF\_IDL   &    917 &    475 &    475 &    276 &    196 & 0 & 2 &  75$\times$ \\
+      & QF\_RDL   &    113 &     74 &     74 &     39 &     35 & 0 & 0 & 120$\times$ \\
+      & QF\_LIA   & 4\,748 & 2\,511 & 2\,511 & 2\,341 &    152 & 0 & 0 & 221$\times$ \\
+      & QF\_LRA   &    703 &    526 &    526 &    425 &    101 & 0 & 0 &  86$\times$ \\
+      & QF\_UFIDL &    422 &     38 &     38 &     30 &      8 & 0 & 0 &   2$\times$ \\
+      & QF\_UFLIA &    192 &    172 &    172 &    166 &      4 & 0 & 0 & 222$\times$ \\
+      & QF\_UFLRA &    511 &    441 &    441 &    432 &      9 & 0 & 0 &  26$\times$ \\
       & UF        & 3\,505 & 3\,155 & 3\,155 & 3\,145 &      7 & 2 & 0 & 369$\times$ \\
       & UFIDL     &     53 &     53 &     53 &     53 &      0 & 0 & 0 & 717$\times$ \\
-      & UFLIA     & 7\,793 & 7\,445 & 7\,443 & 7\,409 &     12 & 0 & 0 & 210$\times$ \\
+      & UFLIA     & 7\,793 & 7\,444 & 7\,443 & 7\,409 &     12 & 0 & 0 & 210$\times$ \\
       & UFLRA     &     10 &     10 &     10 &     10 &      0 & 0 & 0 & --- \\
     \cmidrule(l){2-10}
-      & total     & 23\,328 & 20\,037 & 19\,194 & 16\,853 & 2\,287 & 5 & 2 & 213$\times$ \\
+      & total     & 23\,328 & 19\,195 & 19\,194 & 16\,853 & 2\,287 & 5 & 2 & 213$\times$ \\
     \midrule
     \multirow{13}{*}{\verit}
-      & QF\_UF    & 4\,361 & 4\,193 & 4\,175 & 2\,446 & 1\,729 &  0 &  0 &  506$\times$ \\
-      & QF\_IDL   &    917 &    645 &    538 &    222 &    293 & 14 &  0 &   52$\times$ \\
-      & QF\_RDL   &    113 &     95 &     28 &     15 &     13 &  0 &  0 & 3\,699$\times$ \\
-      & QF\_LIA   & 4\,748 & 2\,611 & 2\,314 & 2\,220 &    187 & 17 & 10 &  698$\times$ \\
-      & QF\_LRA   &    703 &    580 &    387 &    282 &    105 &  0 &  0 &  167$\times$ \\
-      & QF\_UFIDL &    422 &    271 &     64 &     47 &     16 &  0 &  0 &  499$\times$ \\
+      & QF\_UF    & 4\,361 & 4\,189 & 4\,175 & 2\,446 & 1\,729 &  0 &  0 &  506$\times$ \\
+      & QF\_IDL   &    917 &    635 &    538 &    222 &    293 & 14 &  0 &   52$\times$ \\
+      & QF\_RDL   &    113 &     87 &     28 &     15 &     13 &  0 &  0 & 3\,699$\times$ \\
+      & QF\_LIA   & 4\,748 & 2\,606 & 2\,314 & 2\,220 &    187 & 17 & 10 &  698$\times$ \\
+      & QF\_LRA   &    703 &    579 &    387 &    282 &    105 &  0 &  0 &  167$\times$ \\
+      & QF\_UFIDL &    422 &    270 &     64 &     47 &     16 &  0 &  0 &  499$\times$ \\
       & QF\_UFLIA &    192 &    173 &    130 &    172 &      1 &  0 &  0 &  620$\times$ \\
       & QF\_UFLRA &    511 &    415 &      3 &      3 &      0 &  0 &  0 & --- \\
       & UF        & 3\,505 & 2\,897 & 2\,881 & 2\,860 &      3 & 16 &  1 &  457$\times$ \\
@@ -587,7 +603,7 @@ integer/real subtyping of \verit's proof text.
       & UFLIA     & 7\,793 & 7\,255 & 7\,242 & 7\,006 &    147 & 17 & 43 &  524$\times$ \\
       & UFLRA     &     10 &     10 &     10 &     10 &      0 &  0 &  0 & --- \\
     \cmidrule(l){2-10}
-      & total     & 23\,328 & 19\,196 & 17\,823 & 15\,334 & 2\,494 & 64 & 54 & 497$\times$ \\
+      & total     & 23\,328 & 19\,167 & 17\,823 & 15\,334 & 2\,494 & 64 & 54 & 497$\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -701,7 +717,7 @@ defect and \rulename{lia\_generic} steps as in the SMT-LIB round.
     \toprule
     & & & \multicolumn{4}{c}{\tactic} & & & \\
     \cmidrule(lr){4-7}
-    solver & unsat & \carcara & valid & t/o & mem & holey & \carcara h & \tactic h & slower \\
+    solver & proof & \carcara & valid & t/o & mem & holey & \carcara h & \tactic h & slower \\
     \midrule
     \cvcv  & 2\,869 & 2\,868 & 2\,858 & 1 &  0 &  9 & 0.04 & 4.5 & 234$\times$ \\
     \verit & 2\,681 & 2\,598 & 2\,520 & 3 & 21 & 51 & 0.02 & 3.8 & 483$\times$ \\
