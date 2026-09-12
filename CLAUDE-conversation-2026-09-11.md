@@ -1271,3 +1271,47 @@ At 41/199 of the memory-gated sweep: **23 `invalid`→`valid`**, 9 `→holey`, 9
 
 Two notes: `92d8a42f`, `67a5a426` and `13e721d7` are all still **unpushed**, so the pin bump in `setup-alethe.sh` won't resolve until they are. And you're editing `Command.lean`, `Frontend.lean`, `Reconstruct.lean` and `check-alethe.sh` for the CSV/boxplot feature — I left those alone and committed only my own files.
 
+## Turn: 2026-09-12 00:40 (session 315b089e) — push, and the full 199 measured
+
+**Pushed** `131f9a1f..f1253e4c` to `origin/bv-fixes` (fast-forward): `92d8a42f` (parser
+subtyping), `67a5a426` (resolution pivots), `13e721d7` (the `ac_simp` premise fix) and
+`f1253e4c` (its elaboration test, which had been left unstaged). Suite re-run on exactly that
+tree: 410 passing. GitHub reports the repository moved to `HanielB/carcara` (capital H) and
+redirected the push; `scripts/setup-alethe.sh` still carries the lowercase URL as
+`carcara_remote`, which works through the same redirect but is a latent fragility.
+
+**The differential run over all 199 affected benchmarks finished.**
+
+| old → new | count | |
+| --- | --- | --- |
+| `invalid` → `valid` | 189 | fixed |
+| `invalid` → `holey` | 9 | QF_LIA `calypto`, holey only for `lia_generic` |
+| `invalid` → `invalid` | 1 | a different defect, below |
+
+The first pass reported 24 of these as `error` on both binaries; that was my own 6 GB
+`ulimit -v` on 30–38 MB proofs, not a checker failure. Re-run at 13 GB, all 24 are
+`invalid` → `valid`.
+
+**The one holdout: `QF_UFIDL/uclid/elf.rf10.smt2`, step `t6017`.** It carries *no* premises —
+its 1 228 premise-carrying siblings in the same proof all check now — so it is not the premise
+defect. Diffing the two terms structurally: both are 5-ary `and`s that diverge at depth 8, where
+veriT wrote `(and (and A B) C)` and the normal form is the flattened `(and A B C)`. veriT emitted
+an **under-flattened conclusion**: the equality is true, it simply is not the full normal form.
+
+Dropping the `premises.is_empty()` gate, so the meet-in-the-middle route runs for premise-free
+steps too, makes the whole proof check — verified with a scratch build (`target-nogate`), tree
+left clean. Not done, deliberately: it would relax premise-free `ac_simp` from "the right-hand
+side *is* the normal form of the left" to "both sides have the same normal form", which flips a
+case the Carcara suite pins as `false`:
+
+```
+(= (or (= (and (and p q) r) s) (or p q))
+   (or (= (and (and p q) r) s) p q))     -- currently rejected
+```
+
+— the same shape veriT is producing. Sound either way; it is a question about what the rule
+should mean, worth one proof in this corpus, so it is the user's call rather than part of the
+premise fix.
+
+Report and `elaboration-opportunities.md` §9 corrected to 198-of-199 with the holdout described;
+PDF rebuilt (21 pages).

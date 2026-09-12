@@ -247,6 +247,18 @@ equalities are ignored rather than rejected, leaving such a step exactly as it c
 
 Scale: 199 SMT-LIB veriT proofs in round four were lost this way (13 attributed in the logs plus
 186 whose rule name fell past the runner's 2 KB stderr cap), 175 of them QF_UFIDL
-(`pete2`/`pete`/`uclid`) and 24 QF_LIA. They now check, and Carcara decomposes the step into
+(`pete2`/`pete`/`uclid`) and 24 QF_LIA. A differential run of the pre-fix and post-fix binaries
+over all 199 gives 189 `invalid` → `valid`, 9 `invalid` → `holey` (QF_LIA `calypto`, holey only
+for their `lia_generic` steps) and one still rejected. Carcara decomposes the step into
 `cong`/`trans`/`semilattice_simp`, which lean-smt already reconstructs — no lean-smt change was
 needed.
+
+The one holdout, `QF_UFIDL/uclid/elf.rf10.smt2` step `t6017`, is a *different* defect: it carries
+no premises, and its 1 228 premise-carrying siblings in the same proof all check. veriT wrote the
+conclusion under-flattened — `(and (and A B) C)` eight levels down, where the normal form is
+`(and A B C)`. The equality holds, and dropping the `premises.is_empty()` gate so that the
+meet-in-the-middle route runs for premise-free steps too makes the whole proof check (verified
+with a scratch build). That was not done: it would relax premise-free `ac_simp` from "the
+right-hand side *is* the normal form" to "both sides have the same normal form", flipping a case
+the Carcara suite deliberately pins as `false`. Worth one proof in this corpus, so it is left as
+a semantics decision rather than folded into the premise fix.
