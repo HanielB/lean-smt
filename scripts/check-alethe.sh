@@ -4,6 +4,8 @@
 # Usage: scripts/check-alethe.sh [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe>
 #            [native] [lax] [term] [timings]
 #
+# --elaborate and --csv may appear anywhere among the arguments.
+#
 # --csv <dir> writes <dir>/runs.csv and <dir>/steps.csv: what every step cost, in the format
 # carcara's `bench --dump-to-csv` produces. `scripts/rule-boxplots.py <dir> …` plots them.
 #
@@ -23,18 +25,33 @@
 
 set -euo pipefail
 
+usage() {
+  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+}
+
+# The dashed options are taken from anywhere in the line, not only before the files: written
+# after them they would end up among the `#check_alethe` words, where Lean reads `--` as the
+# start of a comment and the option would be silently dropped.
 elaborate=false
 csv=""
+args=()
 while [ $# -gt 0 ]; do
-  case "${1:-}" in
+  case "$1" in
     --elaborate) elaborate=true; shift ;;
-    --csv) csv=$(realpath -m "$2"); shift 2 ;;
-    *) break ;;
+    --csv)
+      if [ $# -lt 2 ]; then echo "error: --csv needs a directory" >&2; usage; exit 1; fi
+      csv=$(realpath -m "$2"); shift 2 ;;
+    --csv=*) csv=$(realpath -m "${1#--csv=}"); shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; args+=("$@"); break ;;
+    -*) echo "error: unknown option: $1" >&2; usage; exit 1 ;;
+    *) args+=("$1"); shift ;;
   esac
 done
+set -- ${args[@]+"${args[@]}"}
 
 if [ $# -lt 2 ]; then
-  echo "Usage: $(basename "$0") [--elaborate] [--csv <dir>] <problem.smt2> <proof.alethe> [native] [lax] [term] [timings]" >&2
+  usage
   exit 1
 fi
 
@@ -42,6 +59,14 @@ smt2=$(realpath "$1")
 alethe=$(realpath "$2")
 shift 2
 flags="$*"
+
+# the same reason: a word `#check_alethe` does not know is not an error to Lean, it is a comment
+for w in $flags; do
+  case "$w" in
+    native|lax|term|timings) ;;
+    *) echo "error: unknown option: $w (expected native, lax, term or timings)" >&2; usage; exit 1 ;;
+  esac
+done
 
 for f in "$smt2" "$alethe"; do
   if [ ! -f "$f" ]; then
@@ -86,7 +111,9 @@ if $elaborate; then
     exit 1
   fi
   carcara_time=$(secs "$t0" "$(now)")
-  alethe="$tmp/elaborated.alethe"
+  # named after the proof it came from: with --csv it is what the proof_file column records, and
+  # a bare "elaborated.alethe" would leave every benchmark's row looking the same
+  alethe="$tmp/$(basename "$alethe").elaborated"
   printf '%s\n' "${out#*$'\n'}" > "$alethe"
 fi
 
