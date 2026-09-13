@@ -740,12 +740,14 @@ population. Figure~\ref{fig:rules} draws, for the rules that carry the most
 total time, the distribution over benchmarks of the mean time per step of that
 rule.
 
+The two solvers are pooled: their per-rule distributions are close enough that
+separating them says nothing the whole-proof figures did not already say.
 The distributions are wide but the ordering is stable, and three things stand
-out. First, the gap is not uniform: it runs from about 150$\times$ on
+out. First, the gap is not uniform: it runs from under 300$\times$ on
 \rulename{rare\_rewrite} and \rulename{distinct\_elim}, where the checker
-replays a rewrite it can name, to four or five orders of magnitude on the
-small clausal rules --- \rulename{and}, \rulename{or\_neg},
-\rulename{equiv\_pos2} --- where \carcara compares two
+replays a rewrite it can name, to four orders of magnitude on the
+small clausal rules --- 9\,300$\times$ on \rulename{or\_neg} and
+30\,000$\times$ on \rulename{and} --- where \carcara compares two
 arrays and the checker builds and kernel-checks a term. Those rules are cheap
 per step for both, but they are the most numerous by an order of magnitude
 (84\,M \rulename{cong} and 178\,M \rulename{resolution} steps in the round),
@@ -759,20 +761,20 @@ arithmetic or rewriting rules moves a number half of which is one rule.
 
 Third, the structural AC rules that replaced \rulename{aci\_simp}
 (Section~\ref{sec:carcara}) are cheap on both sides:
-\rulename{semilattice\_simp} at a median of 3.3\,ms and \rulename{poly\_simp}
-at 12\,ms for the checker, with a ratio under 1\,000$\times$, better than the
-clausal rules they are glued to. Splitting \rulename{aci\_simp} into rules
+\rulename{semilattice\_simp} at a median of 4.3\,ms and \rulename{poly\_simp}
+at 11\,ms for the checker, with ratios of 833$\times$ and 781$\times$, better
+than the clausal rules they are glued to. Splitting \rulename{aci\_simp} into rules
 with a normal form did not cost checking time.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=\textwidth]{rule-boxplots}
   \caption{Mean time per step of each rule, over the benchmarks whose
-    elaborated proof both checkers accept, for the fourteen rules with the
-    largest total time. Boxes are the quartiles and whiskers the 5th and 95th
-    percentiles; the label above each group is the rule's total step count in
-    the round. Note the log scale: the two \carcara series sit three to four
-    decades below the two \tactic ones.}
+    elaborated proof both checkers accept, for the sixteen rules with the
+    largest total time, pooling the two solvers. Boxes are the quartiles and
+    whiskers the 5th and 95th percentiles; the label above each group is the
+    rule's total step count in the round. Note the log scale: \carcara sits
+    three to four decades below \tactic throughout.}
   \label{fig:rules}
 \end{figure}
 
