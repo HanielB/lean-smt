@@ -921,3 +921,70 @@ Paired on the same 17,559 benchmarks:
 Both fixes hold at scale: no legacy AC rule survives into any elaborated proof, all 35 round-five holes are valid again, and the checkelab arm covers every elaborated proof.
 
 The residue against round four is boundary noise: the 12 `valid → timeout` all took 529–900 s in round four (limit 900); the 4 "lost in elaboration" are cvc5 solver timeouts, no proof to elaborate; the 42 lean errors are the same 42 benchmarks as round four (35 `failed to parse`, 5 deep recursion, 2 memory) — still to be investigated.
+
+## Turn: 2026-09-12 21:13:23 (session bddaeda3)
+
+Round six looks right. Both fixes hold at scale on the partial cvc5 data, and veriT has not started yet.
+
+**Progress** at about three hours in: cvc5 has 17,559 of 23,328 tasks aggregated, with 200 running and 5,569 queued. All 23,328 veriT tasks are pending behind them.
+
+**Paired on the same 17,559 benchmarks**
+
+| | round four | round five | round six |
+|---|---|---|---|
+| carcara valid | 14,003 | 13,999 | 14,001 |
+| lean valid | 13,633 | 13,590 | 13,625 |
+| lean timeout | 324 | 332 | 334 |
+| lean error | 42 | 42 | 42 |
+| holey | 2 | 35 | 0 |
+| carcara-on-elaborated stats present | none | 6,986 of 15,279 | 14,001 of 14,001 |
+
+- No legacy AC rule survives into any elaborated proof. All 35 round-five holes are valid again, and round four's own 2 holes are gone too.
+- The checkelab arm now covers every elaborated proof, so the rule box plots will have a full like-for-like carcara series.
+
+**The residue against round four is noise, not regression**
+- The 12 benchmarks that went valid to timeout all took between 529 and 900 s in round four, against a 900 s limit.
+- The 4 "lost in elaboration" are cvc5 solver timeouts this time, so there was no proof to elaborate.
+- The 42 Lean errors are the same 42 benchmarks as round four: 35 `failed to parse`, 5 deep recursion, 2 memory. These remain uninvestigated.
+
+The check is recorded in the log as commit `c622cb6`. Next check should come once veriT has started, likely a few hours from now.
+
+## Turn: 2026-09-12 21:29:33 (session bddaeda3)
+
+Interim status while the heavy local re-checks run.
+
+**Three separate causes behind the 42 Lean errors**, all reproduced locally:
+
+- **35 parse errors, two sub-causes.** For 21 of them (UFLIA/tokeneer and the QF_IDL cache benchmark) Carcara printed symbols containing an apostrophe without bars, so cvc5's parser rejected the elaborated proof. Fixed in Carcara `29a8e966`, pushed, suite 412 passing. All 20 locally available benchmarks now check valid in Lean. The other 14 (QF_LIA/2019-ezsmt) are different: cvc5 keeps a parameterised `define-fun` as an uninterpreted symbol plus an assumption equating it to a lambda, and then reasons about the lambda with `bind`, `trans` and `ho_cong`. lean-smt macro-expands definitions and has no `ho_cong`, and cvc5's parser has no `lambda` outside HO logics. Supporting this needs define-funs as let-bound functions plus an `ho_cong` reconstructor. Not implemented. These 14 are the only proofs in round six containing `ho_cong`.
+- **5 deep recursions** are problems with 160k declared symbols and 280k assertions. Lean's `withLocalDecls` nests one call per declaration, which overflows the interpreter stack. I added a flat variant that extends the local context in a loop and installs it once, used for the problem's symbols and assertions. lean-smt builds. The 15 MB benchmark is now past the point where it crashed before and still running, so I will confirm once it finishes.
+- **2 memory exceptions** are 104 KB UF benchmarks with 141-step proofs that blow past 6 GB in 30 s locally. Not yet pinned to a step. I will run one with per-step progress once the current Lean run finishes, since only one heavy Lean run goes at a time.
+
+Cluster round six is at 18,045 cvc5 tasks, veriT still queued.
+
+## The 42 Lean errors of round six, root-caused
+
+All reproduced locally (`~/.claude/jobs/bddaeda3/tmp/repro.sh` runs the cvc5 arm keeping every intermediate file). Three causes, four sub-causes:
+
+**35 × `cvc5 failed to parse the input`.**
+- 21 (UFLIA/tokeneer, QF_IDL/sep): Carcara's printer decided quoting with the *lexer's* character predicate, which admits `'` for Carcara's own capture-avoidance renames. A symbol read from `|status'|` came back out as `status'`, which cvc5's parser rejects. **Carcara `29a8e966`** (pushed): the printer quotes any symbol containing `'`; unit test added, suite 412. The 20 locally available proofs now check valid in Lean.
+- 14 (QF_LIA/2019-ezsmt/incrementalScheduling): cvc5 keeps a parameterised `define-fun` as an uninterpreted symbol with an assumption `(= max (lambda ((x Int) (y Int)) …))`, rewrites inside the lambda under a `bind`, chains with `trans`, and applies the result with `ho_cong` (`(max 0 x)` → `((lambda …) 0 x)`). lean-smt macro-expands definitions (so `max` unapplied has no meaning), has no `ho_cong` reconstructor, and these are the only 14 proofs in round six with `ho_cong`. **Not fixed.** Supporting them means define-funs as let-bound functions plus `ho_cong` and lambda `bind`/beta; a design decision for later.
+
+**5 × deep recursion** (QF_LIA/20220307-SMPT SharedMemory, wireRouting/p15): problems with 160k declared symbols and 280k assertions. `Meta.withLocalDecls` nests one `withLocalDecl` per declaration, and the interpreter's stack gave out after minutes. **lean-smt `3cc44fa`**: `withLocalDeclsFlat` extends the local context in a loop and installs it once. RC-06 (15 MB): abort at 160 s / 5.2 GB → valid in 190 s / 3.2 GB. p15 (33 MB): valid in 280 s.
+
+**2 × memory_exception** (UF/coinductive_list, 141- and 437-step proofs): an infinite loop. `resolveChain` re-resolves while the pivot remains in the working clause, and the premise `(cl @p_17 (not @p_17))` puts the pivot back on every pass: 2.2 million iterations before the 6 GB cap locally, 10 GB on the cluster. **lean-smt `4a37a9b`**: stop when the premise holds the pivot with the working clause's polarity. Both proofs now valid in about a second. `lake test`: 142 passing, none failed.
+
+Pin bumped to Carcara `29a8e966` in `scripts/setup-alethe.sh`. Round six keeps running on the old toolchain; the 42 will show as errors there, and the fixes are for the next drop.
+
+Also noticed: 40 of the 334 Lean timeouts have fewer than 2,000 elaborated steps (UF/sledgehammer/Hoare at ~330 steps and 3 GB, QF_IDL/parity with 10 MB proofs of a few hundred steps). Probing one locally.
+
+## The small-proof timeouts, root-caused too
+
+Probed `UF/sledgehammer/Hoare/smtlib.689154` (2 KB problem, 560-step / 153 KB elaborated proof, 900 s timeout in rounds four and six). Three super-linear costs, one after the other:
+
+1. **Parser, 80 s**: every `:named` term re-resolved under every binder scope, and the proof has 227 names under thousands of quantifier scopes. A named term mentioning none of the scope's variables now resolves once (free atoms with proper scoping — a `?v0` bound *inside* the term must not count, since cvc5 reuses the name everywhere). → 0.2 s.
+2. **Realization, > 200 s**: the arena called any term containing a bound atom *open*, so every quantified formula and every `choice` term was printed inline for cvc5. The 13 skolem definitions nest, so the text doubled per level: **144 MB for one step**. Each node now carries its free bound atoms and a binder form removes its own. → 0.04 s.
+3. **Reconstruction, 190 s on the first step, then out of memory**: `withNewTermCache` empties the term cache under every binder, so closed subterms were reconstructed anew per scope — exponential on the same nesting. A second cache keeps terms that mention no variable beyond the problem's symbols; the Alethe driver sets that base, the cvc5 tactic path is unchanged (a first attempt that filtered the scoped cache on exit broke both flows: the scope wrapper is entered *after* the binder's variables are in the context). → 2 s.
+
+**lean-smt `e9c32bf`, `6734243`.** `smtlib.689154`: 900 s timeout → valid in 2.0 s; `uf.828950` (another of the 40): valid in 2.0 s. Regression set (coinductive_list ×3, tokeneer, SharedMemory RC-06 at 198 s) all valid; `lake test` 142 passing.
+
+Toolchain for the next drop: Carcara `29a8e966`, lean-smt `6734243`. Round six keeps running on the round-six binaries.
