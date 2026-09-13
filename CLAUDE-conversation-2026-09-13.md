@@ -389,3 +389,13 @@ Three things worth flagging:
 - **I revised §2.2 of the paper**, per your answer. It argued no rule reconstruction is worth optimising; `and` is a counterexample and its own median (8.6 ms, above `resolution`'s 5.2) was the tell. The claim about resolution stands unchanged. `docs-alethe/elaboration-opportunities.md` gets a new §10, including a correction to its own "reflection wins" guidance — reflection would need a deep embedding here, where the type you already have *is* the connective.
 
 Committed as one change; the two PDFs are left uncommitted, since `alethe-lean-smt.pdf` would bake in the still-uncommitted `rule-boxplots.pdf` from the round-six work.
+
+## Turn: 2026-09-13 17:13:57 (session fb88d077)
+
+Committed as `008ac35` on `alethe-dev` — 8 files, +453/−87.
+
+**Included:** the five Lean files (new `Smt/Reconstruct/Prop/Proj.lean` plus the four migrated), both doc sources, and the conversation log.
+
+**Left uncommitted, deliberately:** `docs-alethe/alethe-lean-smt.pdf` and `docs-alethe/rule-boxplots.pdf`. The boxplot is your in-flight round-six work, not mine, and the tex `\includegraphics`es it — so committing the rebuilt PDF would bake an uncommitted figure into the repo. Both were already modified-and-uncommitted when I started, so this leaves that state as it was. Commit them together whenever you land the round-six plots.
+
+Nothing pushed.
