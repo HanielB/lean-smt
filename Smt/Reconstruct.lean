@@ -59,7 +59,14 @@ structure Reconstruct.Context where
 
 structure Reconstruct.State where
   sortCache : Std.HashMap cvc5.Sort Expr := {}
+  /-- Reconstructed terms of the current binder scope (see `withNewTermCache`). -/
   termCache : Std.HashMap cvc5.Term Expr := {}
+  /-- Reconstructed terms mentioning no variable beyond `baseLCtx`: valid in every scope, so a
+      closed subterm is reconstructed once however many binders it appears under. -/
+  closedTermCache : Std.HashMap cvc5.Term Expr := {}
+  /-- The local context the reconstruction started in, set by the driver that wants closed terms
+      cached across scopes (the Alethe checker); `none` disables `closedTermCache`. -/
+  baseLCtx : Option LocalContext := none
   proofCache : Std.HashMap cvc5.Proof Expr := {}
   count : Nat := 0
   currAssums : Array Expr := #[]
@@ -139,13 +146,22 @@ def reconstructTerm : cvc5.Term → ReconstructM Expr := withTermCache fun t => 
     go rs t
 where
   withTermCache (r : cvc5.Term → ReconstructM Expr) (t : cvc5.Term) : ReconstructM Expr := do
+    if let some e := (← get).closedTermCache[t]? then return e
     match (← get).termCache[t]? with
     -- TODO: cvc5's global bound variables mess up the cache. Find a better fix.
     | some e => return e
     | none   => reconstruct r t
   reconstruct r t := do
     let e ← r t
-    modify fun state => { state with termCache := state.termCache.insert t e }
+    -- with a base context set, closed terms (mentioning no variable of a binder, `let` or anchor
+    -- opened since) are cached for good: `find?` memoizes on pointers, so the check is linear in
+    -- the DAG size of `e`. Without one, every term is scoped, as before.
+    let closed := match (← get).baseLCtx with
+      | some base => !e.hasFVar || (e.find? fun s => s.isFVar && !base.contains s.fvarId!).isNone
+      | none => false
+    modify fun state =>
+      if closed then { state with closedTermCache := state.closedTermCache.insert t e }
+      else { state with termCache := state.termCache.insert t e }
     return e
   go (rs : List (TermReconstructor × Name)) (t : cvc5.Term) : ReconstructM Expr := do
     for (r, n) in rs do
@@ -293,7 +309,8 @@ partial def reconstructProof (pf : cvc5.Proof) (ctx : Reconstruct.Context) :
   let (dfns, state) ← (pf.getArguments.toList.mapM Reconstruct.reconstructTerm).run ctx {}
   let (ps, state) ← (pf.getChildren[0]!.getArguments.toList.mapM Reconstruct.reconstructTerm).run ctx state
   let ((p : Q(Prop)), state) ← (Reconstruct.reconstructTerm (pf.getResult)).run ctx state
-  let (h, ⟨_, _, _, _, _, mvs⟩) ← (Reconstruct.reconstructProof pf).run ctx state
+  let (h, st) ← (Reconstruct.reconstructProof pf).run ctx state
+  let mvs := st.skippedGoals
   if dfns.isEmpty then
     let h : Q(True → $p) ← pure h
     return (dfns, ps, p, q($h trivial), mvs.toList)
@@ -478,7 +495,8 @@ def solveAndReconstructProof (query : String)
       return .unsat none [] uc
     -- Reconstruct proof.
     let some pf := pf | throwError "failed to reconstruct proof for unsat result"
-    let (h, ⟨_, _, _, _, _, mvs⟩) ← (Reconstruct.reconstructProof pf).run ctx state
+    let (h, st) ← (Reconstruct.reconstructProof pf).run ctx state
+    let mvs := st.skippedGoals
     return .unsat h mvs.toList uc
   | .ok (.sat model) =>
     -- Return potential counter-example.

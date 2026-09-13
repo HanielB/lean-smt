@@ -735,6 +735,9 @@ deriving Inhabited
     returned (its trusted steps are the `skippedGoals` of the state). -/
 def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult := do
   let t₀ ← IO.monoNanosNow
+  -- the problem's symbols are in scope for good: terms over them alone are cached across scopes
+  let lctx ← getLCtx
+  modify fun st => { st with baseLCtx := some lctx }
   let asserts := r.problem.asserts
   let as ← asserts.mapM fun t => do
     let p : Q(Prop) ← reconstructTerm t
