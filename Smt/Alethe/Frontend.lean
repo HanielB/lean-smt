@@ -128,8 +128,8 @@ def withProblemSymbols [Inhabited α] (prob : Problem) (skip : Array String) (k 
         let funs := prob.funs.filter fun f => f.getKind! == .CONSTANT && f.hasSymbol! && !skip.contains f.getSymbol!
         let funDecls ← funs.mapM fun f => do
           let ty ← reconstructSort f.getSort!
-          return (Name.mkSimple f.getSymbol!, fun (_ : Array Expr) => pure ty)
-        Meta.withLocalDeclsD funDecls fun fs => do
+          return (Name.mkSimple f.getSymbol!, ty)
+        withLocalDeclsFlat funDecls fun fs => do
           let names := (funs.zip fs).foldl (fun m (f, e) => m.insert f.getSymbol! e) names
           withReader (fun r => { r with userNames := names }) do
             k (ss ++ is ++ fs)

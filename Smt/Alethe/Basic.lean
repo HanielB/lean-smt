@@ -28,6 +28,28 @@ namespace Smt.Alethe
 open Lean Qq
 open Smt.Reconstruct
 
+/-- `Meta.withLocalDeclsD` for declarations whose types do not depend on each other, without the
+    recursion of `Meta.withLocalDecls.loop`: that one nests a `withLocalDecl` per declaration, and
+    a problem with 280,000 assertions or 160,000 declared symbols (QF_LIA/20220307-SMPT) overflows
+    the interpreter's stack inside it. Here the local context is extended in a loop and installed
+    once; local instances are updated as `withLocalDecl` would. -/
+def withLocalDeclsFlat {n : Type → Type} {α : Type} [Monad n] [MonadControlT MetaM n]
+    (decls : Array (Name × Expr)) (k : Array Expr → n α) : n α :=
+  Meta.map1MetaM (fun k => go k) k
+where
+  go {α : Type} (k : Array Expr → MetaM α) : MetaM α := do
+    let mut lctx ← getLCtx
+    let mut insts ← Meta.getLocalInstances
+    let mut fvars := #[]
+    for (name, type) in decls do
+      let fvarId ← mkFreshFVarId
+      lctx := lctx.mkLocalDecl fvarId name type
+      let fvar := mkFVar fvarId
+      if let some className ← Meta.isClass? type then
+        insts := insts.push { className, fvar }
+      fvars := fvars.push fvar
+    Meta.withLCtx lctx insts (k fvars)
+
 register_option smt.alethe.progress : Nat := {
   defValue := 0
   descr := "print a progress line to stderr every N steps, and slow or fallback steps (0: off)"

@@ -741,9 +741,9 @@ def reconstructProof (r : Realized) (term := false) : ReconstructM ProofResult :
     return p
   if smt.alethe.progress.get (← getOptions) > 0 then
     progressLine s!"[alethe] {as.size} assertions reconstructed"
-  let decls := as.mapIdx fun i p => (Name.num `a i, fun (_ : Array Expr) => pure p)
+  let decls := as.mapIdx fun i p => (Name.num `a i, (p : Expr))
   let rs ← getReconstructors ``RuleReconstructor RuleReconstructor
-  Meta.withLocalDeclsD decls fun hs => withAssums hs do
+  withLocalDeclsFlat decls fun hs => withAssums hs do
     let lctx ← getLCtx
     let ref ← IO.mkRef { asserts := asserts.zip (as.zip hs) |>.map fun (t, p, h) => (t, p, h),
                          reconstructors := rs, lctx, baseLctx := lctx,
