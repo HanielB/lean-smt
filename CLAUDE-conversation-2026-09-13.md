@@ -331,3 +331,61 @@ The fix that stands is the minimal one: keep the search first, but treat its thr
 **What is not settled:** whether any of the 40 actually turn valid. On the evidence so far they become timeouts, which is a better failure mode but not a gain in the valid column. I will have the clean number shortly.
 
 Round seven remains staged and unaffected either way, since it carries the fix regardless. The deploy is still waiting on `cluster-approve`.
+
+## Turn: 2026-09-13 16:41:31 (session 6cc35fc7)
+
+Everything is settled and round seven is staged.
+
+**Figure 4** has the two series stacked on one x position per rule, with the step count above the topmost whisker. Sixteen rules fit, and the report rebuilds clean.
+
+**The 40 Decidable failures.** The root cause holds: the instance search throws its own "failed to synthesize" instead of reporting no instance, during reconstruction of the problem's assertions, which happens before any step and so outside the guard that would otherwise trust a failed step. One bad lookup killed the whole run.
+
+The fix is to treat that throw as a fall-through. I first tried something more ambitious, moving the lookup to the leaves so the connectives decompose first, and **that was wrong**. A decidable compound then gets an instance term as large as the proposition instead of the compact one the search returns, and on these very proofs the run spent its entire limit reconstructing assertions without reaching a step. Reverted in `8fff1f6`, which keeps the diagnosis and the guard and restores the original ordering, with a comment recording why the other ordering is not an improvement.
+
+**What it buys, plainly:** the proofs no longer die, but they do not become valid. The smallest of the 40 reaches step 1,000 of 17,000 within the limit. All 40 move from error to timeout. That is a better failure mode and an explainable residue, not a gain in the valid column. `lake test` is at 142 passing.
+
+I also want to flag a process error. My first clean-looking measurement of this was taken while the test suite was running on the same machine, and I nearly reported the starved result as real. Heavy runs go one at a time, and I have noted that.
+
+**Round seven** carries carcara `29a8e966` and lean-smt oleans `8fff1f6`. Everything else is byte-identical to round six and the deploy verifies it. The pre-flight passed on all eight benchmarks.
+
+**Waiting on you:** run `cluster-approve` for the deploy. The dry run and submit follow, one at a time.
+
+## Turn: 2026-09-13 17:12:00 (session fb88d077)
+
+I'll look at how `and` is currently reconstructed in lean-smt and how Carcara checks it.
+
+## Turn: 2026-09-13 17:12:00 (session fb88d077)
+
+Done. **Yes — and it was doing the right thing the wrong way.**
+
+## What was wrong
+
+`Smt/Alethe/Prop.lean:138` projected the i-th conjunct *through* a `List Prop`, so every step paid for the whole conjunction four times: an n-element cons spine rebuilt per step (never shared), a `decide` of `i < n` over that literal at elaboration *and* again in the kernel, n unfoldings of `andN` to reconcile the premise's real type, and i `List.getElem` reductions under a motive.
+
+None of it was necessary. The premise's type is *already* `p₀ ∧ (p₁ ∧ …)`, so `And.right` applies with zero unfolding — and since `reconstructTerm` memoises and cvc5 terms are hash-consed, the conjunct that falls out is the very `Expr` the conclusion was built from, making the kernel's remaining check a pointer compare. That's Carcara's `Arc::ptr_eq` reached from the other side: Carcara is O(1) because it only *checks*, lean-smt is O(1) *nodes per step* because it must produce a term, and both end at a pointer comparison.
+
+## What I did
+
+New `Smt/Reconstruct/Prop/Proj.lean` — it has to live under `Reconstruct/`, not `Alethe/`, since the dependency runs `Alethe → Reconstruct.Prop`. It holds a `ProjChain` (a threaded, partially-unrolled spine) plus seven one-line lemmas. 13 call sites migrated: `and`/`not_or`, all four CNF axioms, both `distinct_elim` paths, `onepoint`, and the six cvc5-native twins. No caller of the old list-indexing lemmas remains.
+
+## Measured
+
+Same tree, with and without the change:
+
+| | before | after |
+|---|---|---|
+| `and` (arity 2 — the *minimum*) | 1.229 ms/step | **0.488 ms** |
+| controls (`implies`/`equiv1`/`refl`) | — | +8% *slower*, i.e. drift runs against the result |
+| reordered `distinct`, n=30 | 24.5 s | **1.2 s** |
+| reordered `distinct`, n=40 | kernel OOM → step became a **trusted hole** | **checked soundly, 1.7 s** |
+| reordered `distinct`, n=60 | (didn't finish) | 4.6 s |
+
+**142/142 tests pass.** The n=40 row is the ESC-Java/javafe OOM reproduced and closed: the old `convert` fallback didn't just run slow there, it silently gave up soundness and recorded a hole.
+
+Three things worth flagging:
+
+- **I had a real bug mid-way.** My first CNF builders passed the i-th *suffix* where the i-th *conjunct* was wanted — they coincide only at the last index, so it slipped through until `eq_diamond10` and `goel_h_b04` failed. Fixed and re-verified.
+- **The local benchmark can't show the main win.** Its conjunctions are size 2 and it has no CNF-axiom steps, so the 14%-of-time / 30,000× cluster figures remain projected, not measured. A cluster round is the real confirmation — that needs your approval to submit.
+- **I revised §2.2 of the paper**, per your answer. It argued no rule reconstruction is worth optimising; `and` is a counterexample and its own median (8.6 ms, above `resolution`'s 5.2) was the tell. The claim about resolution stands unchanged. `docs-alethe/elaboration-opportunities.md` gets a new §10, including a correction to its own "reflection wins" guidance — reflection would need a deep embedding here, where the type you already have *is* the connective.
+
+Committed as one change; the two PDFs are left uncommitted, since `alethe-lean-smt.pdf` would bake in the still-uncommitted `rule-boxplots.pdf` from the round-six work.

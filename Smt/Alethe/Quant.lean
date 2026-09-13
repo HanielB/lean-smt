@@ -485,17 +485,14 @@ def reconstructOnepoint (s : Step) : ReconstructM Expr := do
                 else Meta.withLocalDeclD `h guard.appArg! fun h =>
                   Meta.mkLambdaFVars #[h] (mkApp hnx (mkApp4 (mkConst ``Eq.symm [u]) α te x h))
               | none => throwError "onepoint: malformed guard"
-            let qs := listExpr lits (mkSort .zero)
-            let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[qs]])
-            pure (mkApp4 (mkConst ``orN_of_getElem) qs (toExpr i) hi hguard)
+            -- inject the guard's proof back into the disjunction the body already is
+            pure (← Prop.mkOrInj body lits.length i hguard)
         Meta.mkLambdaFVars #[x, hnx] proof
     else
       Meta.withLocalDeclD `hp body fun hp => do
         let conj ← collectPropsInAndChain body
         let some i := conj.findIdx? isGuard | throwError "onepoint: no guard conjunct in {body}"
-        let ps := listExpr conj (mkSort .zero)
-        let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[ps]])
-        let hc := mkApp4 (mkConst ``Prop.and_elim) ps hp (toExpr i) hi  -- : ps[i]
+        let hc ← Prop.mkAndProj hp body conj.length i  -- : conj[i]
         let hxt := match conj[i]!.eq? with
           | some (_, l₁, _) => if l₁ == x then hc else mkApp4 (mkConst ``Eq.symm [u]) α te x hc
           | none => hc

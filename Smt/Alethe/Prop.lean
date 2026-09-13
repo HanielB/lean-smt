@@ -136,19 +136,22 @@ partial def bfunAtoms (e : Expr) (acc : Array Expr) : MetaM (Array Expr) := do
     addThm s.concl q(@not_not_cl $p)
   -- premise-taking rules
   | "and" =>
+    -- the premise's type is already the right-nested `p₀ ∧ (p₁ ∧ …)`, so the i-th conjunct
+    -- comes out by projection, with nothing for the kernel to unfold; see `Prop.mkAndProj`
     let some i := s.index? | throwError "and: missing index"
     let pr := s.premise! 0
-    let ps : Q(List Prop) ← mkPropList (nary .AND pr.lits[0]!)
-    let hi : Q($i < «$ps».length) ← Meta.mkDecideProof q($i < «$ps».length)
-    let hps : Q(andN $ps) := pr.proof
-    addThm s.concl q(@Prop.and_elim _ $hps $i $hi)
+    if pr.lits.size != 1 then throwError "and: expected a unit clause"
+    let n := (nary .AND pr.lits[0]!).size
+    addThm s.concl (← Prop.mkAndProj pr.proof pr.concl n i)
   | "not_or" =>
     let some i := s.index? | throwError "not_or: missing index"
     let pr := s.premise! 0
-    let ps : Q(List Prop) ← mkPropList (nary .OR (← unNot pr.lits[0]!))
-    let hi : Q($i < «$ps».length) ← Meta.mkDecideProof q($i < «$ps».length)
-    let hnps : Q(¬orN $ps) := pr.proof
-    addThm s.concl q(@Prop.not_or_elim _ $hnps $i $hi)
+    if pr.lits.size != 1 then throwError "not_or: expected a unit clause"
+    let n := (nary .OR (← unNot pr.lits[0]!)).size
+    -- the disjunction itself, taken from the premise's own stated type so that the
+    -- projections' arguments are shared with it
+    let some ty := pr.concl.consumeMData.not? | throwError "not_or: expected a negation"
+    addThm s.concl (← Prop.mkNotOrProj pr.proof ty n i)
   | "not_and" =>
     let pr := s.premise! 0
     let ps : Q(List Prop) ← mkPropList (nary .AND (← unNot pr.lits[0]!))
@@ -230,20 +233,23 @@ partial def bfunAtoms (e : Expr) (acc : Array Expr) : MetaM (Array Expr) := do
     let pr := s.premise! 0
     addThm s.concl (← iteLemma ``Builtin.notIteElim1 (← unNot pr.lits[0]!) #[pr.proof])
   -- CNF axioms
+  -- these four state a connective's CNF directly, so they are proved by walking the chain the
+  -- clause is already made of rather than by indexing a `List Prop` (see `Prop.mkCnfAndPos`)
   | "and_pos" =>
     let some i := s.index? | throwError "and_pos: missing index"
-    let ps : Q(List Prop) ← mkPropList (nary .AND (← unNot s.lits[0]!))
-    addThm s.concl q(Prop.cnfAndPos $ps $i)
+    let t ← unNot s.lits[0]!
+    addThm s.concl (← Prop.mkCnfAndPos (← reconstructTerm t) (nary .AND t).size i)
   | "and_neg" =>
-    let ps : Q(List Prop) ← mkPropList (nary .AND s.lits[0]!)
-    addThm s.concl q(@Prop.cnfAndNeg $ps)
+    let t := s.lits[0]!
+    addThm s.concl (← Prop.mkCnfAndNeg (← reconstructTerm t) (nary .AND t).size)
   | "or_pos" =>
-    let ps : Q(List Prop) ← mkPropList (nary .OR (← unNot s.lits[0]!))
-    addThm s.concl q(@Prop.cnfOrPos $ps)
+    -- `(cl (not P) q₀ … qₙ₋₁)` re-associates to `¬P ∨ P`, whatever the arity
+    let p ← reconstructTerm (← unNot s.lits[0]!)
+    addThm s.concl (mkApp (mkConst ``Prop.notOrSelf) p)
   | "or_neg" =>
     let some i := s.index? | throwError "or_neg: missing index"
-    let ps : Q(List Prop) ← mkPropList (nary .OR s.lits[0]!)
-    addThm s.concl q(Prop.cnfOrNeg $ps $i)
+    let t := s.lits[0]!
+    addThm s.concl (← Prop.mkCnfOrNeg (← reconstructTerm t) (nary .OR t).size i)
   | "implies_pos" =>
     let (p, q) ← binary (← unNot s.lits[0]!)
     addThm s.concl q(@Prop.cnfImpliesPos $p $q)

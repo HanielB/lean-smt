@@ -192,8 +192,14 @@ pair at n = 60 (1 770 disequalities) was enough to run for minutes; at the ESC-J
 disequality conjunctions that agree pairwise up to orientation by **congruence on the `∧`-chain**,
 with `ne_symm_eq : (a ≠ b) = (b ≠ a)` at the flipped leaves — an O(n) proof, so the flipped n = 60
 case drops from minutes to 175 ms and the ESC-Java distincts no longer exhaust memory. A genuine
-*reordering* of the pairs still falls back to the quadratic conversion, but veriT and cvc5 emit the
+*reordering* of the pairs still falls back to the pairwise conversion, but veriT and cvc5 emit the
 pairs in lexicographic order, so that path is not exercised in the corpora.
+
+**The fallback is no longer quartic either** (see §10): its projections now share one chain, so it
+builds O(n²) nodes rather than O(n⁴). Measured on a reordered (not merely flipped) distinct, which
+is the shape that forces the fallback: n = 30 goes from 24.5 s to 1.5 s, and n = 40 — where the
+kernel used to report "excessive memory consumption" and the step degraded to a hole — now checks
+soundly in 2.4 s.
 
 **The lazy alternative, for the record (cvc5's `distinct_extension.h` shape).** Even the linear
 congruence proof materializes the whole `(and …)` — O(n²) nodes — when downstream only a handful of
@@ -266,3 +272,56 @@ only for their `lia_generic` steps); the premise fix alone accounted for 189 of 
 to fall was `QF_UFIDL/uclid/elf.rf10.smt2` step
 `t6017`, the premise-free under-flattened case above — its 1 228 premise-carrying siblings in the
 same proof had already been recovered by the premise fix. lean-smt needed no change.
+
+## 10. Project the connective you already have; do not manufacture a list and index it — done (lean)
+
+`and` was **14% of the checker's time** in round six (2.9 M steps, 159 457 s) with the **worst
+per-step ratio against carcara of any rule, 30 000×** — and a median of 8.6 ms/step, *above*
+`resolution`'s 5.2 ms. For a rule whose entire content is "the i-th conjunct of the premise", that
+is not something the rule demands; it was how the proof term was built.
+
+lean-smt reconstructs an n-ary `and` to the right-nested `p₀ ∧ (p₁ ∧ … ∧ pₙ₋₁)`, which is
+`andN [p₀, …, pₙ₋₁]` — but only *after* n unfoldings of `andN`. Projecting the i-th conjunct
+through that list charged every step for the whole conjunction, four times over:
+
+1. an n-element `List Prop` spine rebuilt from scratch at every step (so m projections out of one
+   premise were Θ(m·n) nodes, never shared);
+2. `Meta.mkDecideProof` forcing `List.length` of that literal at elaboration time, and the kernel
+   re-running the `decide`;
+3. n unfoldings of `andN` for the kernel to reconcile the premise's *stated* type with the `andN`
+   the lemma wanted;
+4. i reductions of `List.getElem`, each rewriting through `List.getElem_cons_succ` with the
+   residual list in the motive.
+
+**None of it is necessary.** The premise's type is *already* headed by `And`, so `And.right`
+applies with zero unfolding, and — because `reconstructTerm` memoises and cvc5 terms are
+hash-consed — the conjunct that falls out is the very `Expr` the conclusion was built from, so the
+kernel's remaining check is a pointer comparison. That is exactly what carcara gets from
+`Arc::ptr_eq` on a flat `Term::Op(And, Vec<Rc<Term>>)`, reached from the other side: carcara is
+O(1) because it only *checks*, lean-smt is O(1) *nodes per step* because it must produce a term,
+and both end at a pointer compare.
+
+Measured on the vnnlib proof, same tree with and without the change, at conjunctions of size 2 —
+the *minimum*, where this fix has the least to gain: `and` fell from **1.229 ms/step to 0.488 ms**,
+a 2.5× that is really ~2.7× since the controls drifted 8% the other way in the same pair of runs
+(`implies` 0.376 → 0.407, `equiv1` 0.274 → 0.295, `refl` 0.239 → 0.257). Against `implies`, the
+structurally identical rule, `and` went from 3.3× its cost to 1.2×. The win grows with the arity,
+and with the number of projections out of one premise once the chain is shared (§7).
+
+The same shape covers `not_or` (with `notOrLeft`/`notOrRight` stated so that it, too, is an
+application spine rather than a lambda, hence shareable), `onepoint`'s guard extraction, and the
+CNF axioms `and_pos`/`and_neg`/`or_neg` — where **`or_pos` collapses to a single node**, its clause
+`(cl (not P) q₀ … qₙ₋₁)` being `¬P ∨ P` once re-associated.
+
+**The general lesson, and a correction to "reflection wins" above.** The guidance in *What the
+kernel finds expensive* — hand the kernel a closed computation and one `decide`, not a chain of
+lemma instances over `Prop`-valued lists — is right when the data really is data. It points the
+wrong way here: reflection would need a deep embedding of the conjunction, whereas the *type the
+consumer already has* is the connective itself. Where that is so, walk it.
+
+**One trap, for anyone repeating this.** The last conjunct must be identified from the rule's
+**arity**, never by testing whether the residual type is still an `∧`: `andN` leaves the last
+conjunct bare, and that conjunct may itself be a conjunction. `blocks2` (indices 0, 17 and 18 of a
+19-ary premise) and `eq_diamond10` (index 9 of 10, with nested-`and` conjuncts) both catch a
+shape-directed test returning the wrong conjunct — silently, since the kernel would still accept a
+*differently* wrong term only at the outer defeq check.

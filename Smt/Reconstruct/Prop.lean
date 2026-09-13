@@ -14,7 +14,9 @@ public meta import Smt.Reconstruct.Builtin.AC
 public import Smt.Reconstruct.Prop.Core
 public meta import Smt.Reconstruct.Prop.Core
 public import Smt.Reconstruct.Prop.Lemmas
+public import Smt.Reconstruct.Prop.Proj
 public meta import Smt.Reconstruct.Prop.Lemmas
+public meta import Smt.Reconstruct.Prop.Proj
 public import Smt.Reconstruct.Prop.Rewrites
 public meta import Smt.Reconstruct.Prop.Rewrites
 public import Smt.Reconstruct.Prop.AciNorm
@@ -367,14 +369,13 @@ def reconstructChainResolution (cs as : Array cvc5.Term) (ps : Array Expr) : Rec
     let hnp : Q(¬$p) ← reconstructProof pf.getChildren[1]!
     addThm q(False) q(Prop.contradiction $hp $hnp)
   | .AND_ELIM =>
-    let f t ps := do
-      let p : Q(Prop) ← reconstructTerm t
-      return q($p :: $ps)
-    let ps : Q(List Prop) ← (nary .AND pf.getChildren[0]!.getResult).foldrM f q([])
+    -- the premise's type is already the right-nested `p₀ ∧ (p₁ ∧ …)`, so the i-th conjunct is
+    -- a projection out of it, with nothing for the kernel to unfold; see `Prop.mkAndProj`
+    let t := pf.getChildren[0]!.getResult
+    let n := (nary .AND t).size
     let i : Nat := pf.getArguments[0]!.getIntegerValue!.toNat
-    let hi : Q($i < «$ps».length) ← Meta.mkDecideProof q($i < «$ps».length)
-    let hps : Q(andN $ps) ← reconstructProof pf.getChildren[0]!
-    addThm (← reconstructTerm pf.getResult) q(@Prop.and_elim _ $hps $i $hi)
+    let hps ← reconstructProof pf.getChildren[0]!
+    addThm (← reconstructTerm pf.getResult) (← mkAndProj hps (← reconstructTerm t) n i)
   | .AND_INTRO =>
     let cpfs := pf.getChildren
     let q : Q(Prop) ← reconstructTerm cpfs.back!.getResult
@@ -386,14 +387,11 @@ def reconstructChainResolution (cs as : Array cvc5.Term) (ps : Array Expr) : Rec
     let ⟨q, hq⟩ ← cpfs.pop.foldrM f (⟨q, hq⟩ : Σ q : Q(Prop), Q($q))
     addThm q hq
   | .NOT_OR_ELIM =>
-    let f t ps := do
-      let p : Q(Prop) ← reconstructTerm t
-      return q($p :: $ps)
-    let ps : Q(List Prop) ← (nary .OR pf.getChildren[0]!.getResult[0]!).foldrM f q([])
+    let t := pf.getChildren[0]!.getResult[0]!
+    let n := (nary .OR t).size
     let i : Nat := pf.getArguments[0]!.getIntegerValue!.toNat
-    let hi : Q($i < «$ps».length) ← Meta.mkDecideProof q($i < «$ps».length)
-    let hnps : Q(¬orN $ps) ← reconstructProof pf.getChildren[0]!
-    addThm (← reconstructTerm pf.getResult) q(@Prop.not_or_elim _ $hnps $i $hi)
+    let hnps ← reconstructProof pf.getChildren[0]!
+    addThm (← reconstructTerm pf.getResult) (← mkNotOrProj hnps (← reconstructTerm t) n i)
   | .IMPLIES_ELIM =>
     let p : Q(Prop) ← reconstructTerm pf.getChildren[0]!.getResult[0]!
     let q : Q(Prop) ← reconstructTerm pf.getChildren[0]!.getResult[1]!
@@ -459,39 +457,24 @@ def reconstructChainResolution (cs as : Array cvc5.Term) (ps : Array Expr) : Rec
     let hnps : Q(¬andN $ps) ← reconstructProof pf.getChildren[0]!
     addThm (← reconstructTerm pf.getResult) (.app q(Prop.notAnd $ps) hnps)
   | .CNF_AND_POS =>
+    -- walk the conjunction the clause is already made of; see `Prop.mkCnfAndPos`
     let cnf := pf.getArguments[0]!
     let i : Nat := pf.getArguments[1]!.getIntegerValue!.toNat
-    let mut ps : Q(List Prop) := q([])
-    let n := cnf.getNumChildren
-    for i in [:n] do
-      let p : Q(Prop) ← reconstructTerm cnf[n - i - 1]!
-      ps := q($p :: $ps)
-    addThm (← reconstructTerm pf.getResult) q(Prop.cnfAndPos $ps $i)
+    addThm (← reconstructTerm pf.getResult)
+      (← mkCnfAndPos (← reconstructTerm cnf) cnf.getNumChildren i)
   | .CNF_AND_NEG =>
     let cnf := pf.getArguments[0]!
-    let mut ps : Q(List Prop) := q([])
-    let n := cnf.getNumChildren
-    for i in [:n] do
-      let p : Q(Prop) ← reconstructTerm cnf[n - i - 1]!
-      ps := q($p :: $ps)
-    addThm (← reconstructTerm pf.getResult) q(@Prop.cnfAndNeg $ps)
+    addThm (← reconstructTerm pf.getResult)
+      (← mkCnfAndNeg (← reconstructTerm cnf) cnf.getNumChildren)
   | .CNF_OR_POS =>
-    let cnf := pf.getArguments[0]!
-    let mut ps : Q(List Prop) := q([])
-    let n := cnf.getNumChildren
-    for i in [:n] do
-      let p : Q(Prop) ← reconstructTerm cnf[n - i - 1]!
-      ps := q($p :: $ps)
-    addThm (← reconstructTerm pf.getResult) q(@Prop.cnfOrPos $ps)
+    -- `¬P ∨ P`, whatever the arity
+    let p ← reconstructTerm pf.getArguments[0]!
+    addThm (← reconstructTerm pf.getResult) (mkApp (mkConst ``notOrSelf) p)
   | .CNF_OR_NEG =>
     let cnf := pf.getArguments[0]!
     let i : Nat := pf.getArguments[1]!.getIntegerValue!.toNat
-    let mut ps : Q(List Prop) := q([])
-    let n := cnf.getNumChildren
-    for i in [:n] do
-      let p : Q(Prop) ← reconstructTerm cnf[n - i - 1]!
-      ps := q($p :: $ps)
-    addThm (← reconstructTerm pf.getResult) q(Prop.cnfOrNeg $ps $i)
+    addThm (← reconstructTerm pf.getResult)
+      (← mkCnfOrNeg (← reconstructTerm cnf) cnf.getNumChildren i)
   | .CNF_IMPLIES_POS =>
     let p : Q(Prop) ← reconstructTerm pf.getArguments[0]![0]!
     let q : Q(Prop) ← reconstructTerm pf.getArguments[0]![1]!

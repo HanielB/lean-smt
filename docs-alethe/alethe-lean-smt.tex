@@ -754,10 +754,32 @@ per step for both, but they are the most numerous by an order of magnitude
 so the ratio there is what sets the whole-proof figure.
 
 Second, one rule dominates the total: \rulename{resolution} is 51\% of the
-checker's time, and \rulename{and} a further 14\%. This is the quantitative
-form of the claim that the remedy for the timeouts is a reflective resolution
-checker rather than better rule reconstructions --- no amount of work on the
-arithmetic or rewriting rules moves a number half of which is one rule.
+checker's time, and \rulename{and} a further 14\%. Half of the number is one
+rule, and no amount of work on the arithmetic or rewriting rules moves it: the
+remedy for the timeouts is a reflective resolution checker.
+
+\rulename{and}, though, is not of that kind, and the figure was what made us
+look. Its median is 8.6\,ms, \emph{above} \rulename{resolution}'s 5.2\,ms and
+higher than every rule in the figure but \rulename{poly\_simp} --- the highest
+per-step cost of any high-volume rule, on a rule whose whole content is to name
+the $i$-th conjunct of a premise. That was an artefact of how the proof term was
+built rather than anything the rule demands. The reconstruction sends an n-ary
+\lstinline{and} to a right-nested $p_0 \wedge (p_1 \wedge \ldots)$, which is
+\lstinline{andN} of the list of conjuncts only after $n$ unfoldings; projecting
+the $i$-th conjunct \emph{through} that list therefore charged every step for
+the whole conjunction --- an $n$-element \lstinline{List Prop} rebuilt per step,
+a \lstinline{decide} of $i < n$ over it, $n$ unfoldings of \lstinline{andN} to
+reconcile the premise's stated type, and $i$ reductions of
+\lstinline{List.getElem}. Projecting structurally instead costs nothing to
+reduce: the premise's type is \emph{already} headed by $\wedge$, so
+\lstinline{And.right} applies with no unfolding at all, and the conjunct that
+comes out is the very term the conclusion was built from, so the kernel's
+remaining check is a pointer comparison --- the same thing \carcara does with
+its hash-consed \lstinline{Arc::ptr_eq}, arrived at from the other side. The
+same holds of \rulename{not\_or} and of the CNF axioms, where
+\rulename{or\_pos} collapses to a single node. The lesson generalizes past
+these rules: where the consumer's type already \emph{is} the connective, walk
+it; do not manufacture a list and index it.
 
 Third, the structural AC rules that replaced \rulename{aci\_simp}
 (Section~\ref{sec:carcara}) are cheap on both sides:
@@ -771,9 +793,10 @@ with a normal form did not cost checking time.
   \includegraphics[width=\textwidth]{rule-boxplots}
   \caption{Mean time per step of each rule, over the benchmarks whose
     elaborated proof both checkers accept, for the sixteen rules with the
-    largest total time, pooling the two solvers. Boxes are the quartiles and
-    whiskers the 5th and 95th percentiles; the label above each group is the
-    rule's total step count in the round. Note the log scale: \carcara sits
+    largest total time, pooling the two solvers. The two series share an $x$
+    position. Boxes are the quartiles and whiskers the 5th and 95th
+    percentiles; the label above each group is the rule's total step count in
+    the round. Note the log scale: \carcara sits
     three to four decades below \tactic throughout.}
   \label{fig:rules}
 \end{figure}

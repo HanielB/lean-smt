@@ -121,10 +121,8 @@ def reconstructDistinctFalse (s : Step) : ReconstructM Expr := do
   let some i := ps.findIdx? (fun p => match sidesOf p with | some (a, b) => a == b | none => false)
     | throwError "distinct-false: no reflexive disequality in {le}"
   let some (a, _) := sidesOf ps[i]! | unreachable!
-  let sps := listExpr ps (mkSort .zero)
   let h ← Meta.withLocalDeclD `h le fun h => do
-    let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
-    let pr := mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
+    let pr ← Prop.mkAndProj h le ps.length i
     Meta.mkLambdaFVars #[h] (mkApp pr (← Meta.mkEqRefl a))
   addThm s.concl (← Meta.mkAppM ``eq_false #[h])
 
@@ -441,12 +439,13 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       let n := l.getNumChildren
       if n < 3 then throwError "distinct_elim: {l} is not false"
       let ps ← collectPropsInAndChain le
-      let sps := listExpr ps (mkSort .zero)
       let h ← Meta.withLocalDeclD `h le fun h => do
-        let conj (i : Nat) : ReconstructM Expr := do
-          let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
-          return mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
-        Meta.mkLambdaFVars #[h] (← Meta.mkAppM ``distinct_bool_false #[← conj 0, ← conj 1, ← conj (n - 1)])
+        -- one chain for the three projections, so the spine to conjunct `n - 1` is built once
+        let c := Prop.ProjChain.of .and h le ps.length
+        let (c₀, c) ← c.proj 0
+        let (c₁, c) ← c.proj 1
+        let (c₂, _) ← c.proj (n - 1)
+        Meta.mkLambdaFVars #[h] (← Meta.mkAppM ``distinct_bool_false #[c₀, c₁, c₂])
       return ← addThm s.concl (← Meta.mkAppM ``eq_false #[h])
     if ← Meta.isDefEq le re then return ← addThm s.concl (← mkRefl l)
     let pairOf (e : Expr) : Option (Expr × Expr) :=
@@ -464,28 +463,30 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
       return ← addThm s.concl h
     let ls ← collectPropsInAndChain le
     let rs ← collectPropsInAndChain re
-    let lps := listExpr ls (mkSort .zero)
-    let rps := listExpr rs (mkSort .zero)
-    -- from `h : andN src` prove `andN tgt`, pairing each target conjunct with a source one
-    let convert (src tgt : List Expr) (sps : Expr) (h : Expr) : ReconstructM Expr := do
+    -- from `h : andN src` prove `andN tgt`, pairing each target conjunct with a source one.
+    -- The projections share one chain: a `distinct` over n arguments has n(n-1)/2 conjuncts
+    -- and every one of them is projected, so a chain per conjunct would be quartic in n (it
+    -- was, and ran out of memory on the ESC-Java proofs).
+    let convert (src tgt : List Expr) (sty : Expr) (h : Expr) : ReconstructM Expr := do
+      let mut c := Prop.ProjChain.of .and h sty src.length
       let mut proofs := #[]
       for t in tgt do
         let some (a, b) := pairOf t | throwError "distinct_elim: unexpected conjunct {t}"
         let some i := src.findIdx? (fun e => match pairOf e with
             | some (c, d) => (c == a && d == b) || (c == b && d == a)
             | none => false) | throwError "distinct_elim: no pair for {t}"
-        let hi ← Meta.mkDecideProof (← Meta.mkAppM ``LT.lt #[toExpr i, ← Meta.mkAppM ``List.length #[sps]])
-        let pr := mkApp4 (mkConst ``Prop.and_elim) sps h (toExpr i) hi
-        let some (c, _) := pairOf src[i]! | unreachable!
-        let pr' ← if c == a then pure pr else Meta.mkAppM ``Ne.symm #[pr]
+        let (pr, c') ← c.proj i
+        c := c'
+        let some (c₀, _) := pairOf src[i]! | unreachable!
+        let pr' ← if c₀ == a then pure pr else Meta.mkAppM ``Ne.symm #[pr]
         proofs := proofs.push pr'
       -- andN tgt as a right-nested conjunction
       let mut acc := proofs.back!
       for pr in proofs.pop.reverse do
         acc ← Meta.mkAppM ``And.intro #[pr, acc]
       return acc
-    let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs lps h)
-    let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls rps h)
+    let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs le h)
+    let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls re h)
     addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
   | "semilattice_simp" =>
     -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation):
