@@ -399,3 +399,15 @@ Committed as `008ac35` on `alethe-dev` — 8 files, +453/−87.
 **Left uncommitted, deliberately:** `docs-alethe/alethe-lean-smt.pdf` and `docs-alethe/rule-boxplots.pdf`. The boxplot is your in-flight round-six work, not mine, and the tex `\includegraphics`es it — so committing the rebuilt PDF would bake an uncommitted figure into the repo. Both were already modified-and-uncommitted when I started, so this leaves that state as it was. Commit them together whenever you land the round-six plots.
 
 Nothing pushed.
+
+## Round seven: smoke first, then the full round
+
+Your `and` optimisation (`008ac35`) landed on top of my `8fff1f6`, and I rebuilt the report PDF over your revised §2.2 together with the stacked Fig. 4, which lands the two figures both sessions had left uncommitted (`fc10d95`).
+
+Round seven therefore carries six changes over round six, and one of them — yours — changes how `and`, `not_or` and the six CNF axioms build their proof terms. That is the one expected to move the *timeout* column rather than the error column, and it touches 13 call sites, so the round is smoke-tested before it is spent.
+
+**The sample.** The deploy derives twelve `benchmark_set_s10_*` sets with `awk 'NR % 10 == 1'` over the existing `unsat_*` sets: every tenth benchmark in catalog order, about 2,330 per solver. Deterministic, reproducible from the sets already on the cluster, and stratified by logic for free, so each logic's rate is comparable with round six's on the same benchmarks.
+
+**Same everything else.** Toolchain, runner, limits (octa, `-j 8`, wall 3,000 s, 12,000 MB, 1 cpu) and the twelve logics are the full round's. Results go to `cvc5-7smoke` / `verit-7smoke`, so nothing collides with the full run.
+
+Drivers: `deploy-alethe-lean7.sh` (now also derives the sample sets and uploads both submit drivers), the smoke driver, and the full driver, all in `~/exp/alethe-lean/`.
