@@ -491,10 +491,13 @@ question at hand: each solver's proof checked by \carcara, and elaborated by
 \carcara and checked by \tactic. The \tactic arm is the per-step shape, the
 default (Section~\ref{sec:steps}); the other shapes are compared in
 Section~\ref{sec:shapes}. Every benchmark runs on one core of a 16-core node
-with 12\,GB and 2\,700\,s: 150\,s for the solver, 300\,s each for \carcara's
-check and the elaboration, and 900\,s for the checker. Times below are CPU,
-not wall: the checker reads its build over a network filesystem, which costs
-several seconds of wall time on a cold node.
+with 12\,GB and 3\,000\,s: 150\,s for the solver, 300\,s each for \carcara's
+check of the solver's proof, the elaboration, and \carcara's check of the
+\emph{elaborated} proof, and 900\,s for the checker. That third \carcara arm
+carries no result of its own; it exists so that Section~\ref{sec:perrule} can
+compare the two checkers rule by rule over the same steps. Times below are
+CPU, not wall: the checker reads its build over a network filesystem, which
+costs several seconds of wall time on a cold node.
 
 \subsection{SMT-LIB}
 \label{sec:smtlib}
@@ -506,32 +509,44 @@ QF\_LIA, QF\_LRA, QF\_UFIDL, QF\_UFLIA, QF\_UFLRA, UF, UFIDL, UFLIA and UFLRA
 
 \paragraph{Outcomes.} Table~\ref{tab:smtlib} gives the round per logic. The
 population both checkers see is the benchmarks for which the solver produced a
-proof of the empty clause: \cvcv answers unsatisfiable on 20\,037 benchmarks
-but finishes printing the proof for 19\,195 of them, and \verit on 19\,196 and
-19\,167 --- the difference is the solver being killed mid-print, and counting
+proof of the empty clause: \cvcv answers unsatisfiable on 20\,033 benchmarks
+but finishes printing the proof for 19\,191 of them, and \verit on 19\,192 and
+19\,164 --- the difference is the solver being killed mid-print, and counting
 it against the checkers would be counting a proof that does not exist.
-\carcara accepts 19\,194 and 17\,823 of those proofs, and the checker
-validates 16\,853 and 15\,334. Of the proofs the checker does not validate,
-2\,287 and 2\,494 are timeouts, 5 and 64 exhaust its memory, and 2 and 54 have
-a trusted step. The checker's columns are independent verdicts on the same
+\carcara accepts 19\,190 and 18\,688 of those proofs, and the checker
+validates 16\,813 and 15\,870. Of the proofs the checker does not validate,
+2\,327 and 2\,827 are timeouts, 8 and 49 exhaust its memory, 0 and 48 have a
+trusted step, and 50 and 116 end in an error --- four front-end defects, three
+of them since fixed, that Section~\ref{sec:revealed} takes apart. The checker's columns are independent verdicts on the same
 benchmark, not a partition: the checker validates more QF\_UFLIA \verit proofs
 than \carcara accepts, because \carcara reports a proof with a
 \rulename{lia\_generic} step holey while the checker closes that step with
 \texttt{omega}. The picture per logic is uneven in an informative way: the
-quantified logics and the arithmetic ones are nearly complete (99\% of UF,
-UFLIA, QF\_LIA), while QF\_UF, whose proofs are an order of magnitude larger,
-is at 59\%, and QF\_IDL, whose bounded-model-checking proofs are large too, at
-58\% and 41\%.
+quantified logics are nearly complete (99.7\% of UF and 99.6\% of UFLIA for
+\cvcv) and QF\_LIA is at 93\%, while QF\_UF, whose proofs are an order of
+magnitude larger, is at 58\% for both solvers, and QF\_IDL, whose
+bounded-model-checking proofs are large too, at 57\% and 41\%.
 
 \paragraph{Why \carcara does not check every proof.} On this population the
-question has a sharp answer for \cvcv: \carcara accepts 19\,194 of the 19\,195
-proofs, and the one it does not is an elaboration error. The 842 benchmarks
-that separate \emph{unsat} from \emph{proof} are not \carcara's --- the solver
-answered within its 120\,s internal limit and was killed by the 150\,s
-external one while printing, leaving an empty file.
+question has a sharp answer for \cvcv: \carcara accepts 19\,190 of the 19\,191
+proofs, and the one it does not is a rejected \rulename{equiv\_simplify} step.
+The 842 benchmarks that separate \emph{unsat} from \emph{proof} are not
+\carcara's --- the solver answered within its 120\,s internal limit and was
+killed by the 150\,s external one while printing, leaving an empty file.
 
-For \verit the gap is 1\,344 proofs, and it splits five ways. The largest part,
-653, was a \carcara \emph{parser} defect that this round localized: the
+For \verit the gap is 476 proofs, down from 1\,344 in the previous round, and
+it now splits four ways: 261 are holey, all \verit's oracle rule
+\rulename{lia\_generic}, which carries no certificate and which \carcara does
+not check either; 151 exceed \carcara's own 300\,s limit, on proofs of 130 to
+230\,MB; 36 exhaust the 12\,GB during the check or the elaboration; and 28 are
+proofs with a step \carcara's own checker rejects (27 \rulename{and\_simplify},
+one \rulename{minus\_simplify}).
+
+Two \carcara defects account for the 868 proofs the gap lost between the
+rounds, and both are worth stating because each was mistaken for something
+else first.
+
+The larger, 650 proofs, was a \emph{parser} defect: the
 \texttt{-{}-allow-int-\allowbreak real-\allowbreak subtyping} flag was
 consulted for the operators
 whose argument sorts are fixed and numeric (\texttt{+}, \texttt{*},
@@ -544,25 +559,22 @@ checking began with \emph{sort error: expected `Real', got `Int'}, which is
 why the affected benchmarks are exactly the real-arithmetic families (409 in
 QF\_UFLRA's \texttt{mathsat}, 95 and 85 in QF\_LRA's \texttt{meti-tarski} and
 \texttt{LassoRanker}, 47 in QF\_RDL's \texttt{sal}). The same defect had
-appeared in the earlier three-logic round, on 194 QF\_LRA proofs, where it had
-been mistaken for \rulename{lia\_generic} residue; it is now fixed, confined
-to those three polymorphic positions so that \texttt{(div 1.0 2.0)} is still
-rejected, and proofs of the affected families that the parser turned away now
-check (\emph{valid}, not merely parseable). Of the remaining 691: 226 are steps \carcara's own checker rejects; 252 are
-holey, all \verit's oracle rule \rulename{lia\_generic}, which carries no
-certificate and which \carcara does not check either; 151 exceed \carcara's
-own 300\,s limit, on proofs of 130 to 230\,MB; and 62 exhaust the 12\,GB
-during the check or the elaboration.
+appeared in an earlier three-logic round, on 194 QF\_LRA proofs, where it had
+been mistaken for \rulename{lia\_generic} residue. The fix is confined
+to those three polymorphic positions, so that \texttt{(div 1.0 2.0)} is still
+rejected, and the affected families now check \emph{valid}, not merely parse.
 
-Of the 226 rejected steps, 199 are one defect, and it is also \carcara's:
-\rulename{ac\_simp}'s checker ignored the step's \texttt{:premises}. \verit
+The smaller, 190 proofs, was \rulename{ac\_simp}'s checker ignoring the step's
+\texttt{:premises}. \verit
 emits the rule with premises when the flattening of a subterm was derived
 earlier --- notably a rewrite under a binder, packaged as a \rulename{bind}
 subproof --- so the conclusion is congruence over those equalities and not the
 structural flattening of its left-hand side, which is the only reading the
 checker had. The cost was not a checking gap but a lost proof, since
 elaboration validates as it goes: the affected benchmarks came back with
-neither an elaborated proof nor a verdict. The elaborator had carried a
+neither an elaborated proof nor a verdict, and with the diagnosis past the
+runner's byte cap, so that only 13 of the 190 could be attributed to the rule
+at all until the runner learned to lift the attribution line out first. The elaborator had carried a
 premise-aware decomposition all along, reached only for the steps whose
 premises are redundant, which is why the 11\,k proofs that use
 \rulename{ac\_simp} were otherwise unaffected. The checker now reads the
@@ -576,12 +588,17 @@ modulo flattening and idempotence'' accepts both shapes, is sound, and is what
 the elaborator had always computed; the elaborator decomposes either into
 per-layer \rulename{semilattice\_simp} steps glued by \rulename{cong} and
 \rulename{trans}, which the checker already reconstructs, so no lean-smt
-change was needed. All 199 affected proofs --- 175 QF\_UFIDL (\texttt{pete2},
-\texttt{pete}, \texttt{uclid}) and 24 QF\_LIA --- now check: 190
-\emph{valid} and 9 \emph{holey}, the latter QF\_LIA \texttt{calypto} proofs
-holey only for their \rulename{lia\_generic} steps. The identifiable remainder is 24
-\rulename{and\_simplify}, whose singleton \texttt{and} is a \verit-side
-issue.
+change was needed. Of the 190 --- 175 QF\_UFIDL (\texttt{pete2},
+\texttt{pete}, \texttt{uclid}) and 15 QF\_LIA --- all now check, and the nine
+QF\_LIA \texttt{calypto} proofs among them are holey only for their
+\rulename{lia\_generic} steps.
+
+What survives is the 27 \rulename{and\_simplify} rejections, on the same 24
+benchmarks as the previous round plus three that could not be checked at all
+before. These are a \verit-side shape the rule does not admit: the step's
+left-hand side is not a conjunction, as in \texttt{(not (= (of\_bool\$ false)
+(of\_bool\$ true)))}, so the checker refuses it before any simplification is
+attempted.
 
 \begin{table}[p]
   \centering
@@ -605,36 +622,36 @@ issue.
     solver & logic & bench. & proof & \carcara & valid & t/o & mem & holey & slower \\
     \midrule
     \multirow{13}{*}{\cvcv}
-      & QF\_UF    & 4\,361 & 4\,296 & 4\,296 & 2\,527 & 1\,763 & 3 & 0 & 135$\times$ \\
-      & QF\_IDL   &    917 &    475 &    475 &    276 &    196 & 0 & 2 &  75$\times$ \\
-      & QF\_RDL   &    113 &     74 &     74 &     39 &     35 & 0 & 0 & 120$\times$ \\
-      & QF\_LIA   & 4\,748 & 2\,511 & 2\,511 & 2\,341 &    152 & 0 & 0 & 221$\times$ \\
-      & QF\_LRA   &    703 &    526 &    526 &    425 &    101 & 0 & 0 &  86$\times$ \\
-      & QF\_UFIDL &    422 &     38 &     38 &     30 &      8 & 0 & 0 &   2$\times$ \\
-      & QF\_UFLIA &    192 &    172 &    172 &    166 &      4 & 0 & 0 & 222$\times$ \\
-      & QF\_UFLRA &    511 &    441 &    441 &    432 &      9 & 0 & 0 &  26$\times$ \\
-      & UF        & 3\,505 & 3\,155 & 3\,155 & 3\,145 &      7 & 2 & 0 & 369$\times$ \\
-      & UFIDL     &     53 &     53 &     53 &     53 &      0 & 0 & 0 & 717$\times$ \\
-      & UFLIA     & 7\,793 & 7\,444 & 7\,443 & 7\,409 &     12 & 0 & 0 & 210$\times$ \\
-      & UFLRA     &     10 &     10 &     10 &     10 &      0 & 0 & 0 & --- \\
+      & QF\_UF    &   4\,361 &   4\,295 &   4\,295 &   2\,509 &  1\,780 &  6 &  0 & 140$\times$ \\
+      & QF\_IDL   &      917 &      474 &      474 &      271 &     202 &  0 &  0 & 78$\times$ \\
+      & QF\_RDL   &      113 &       73 &       73 &       38 &      35 &  0 &  0 & 140$\times$ \\
+      & QF\_LIA   &   4\,748 &   2\,511 &   2\,511 &   2\,334 &     159 &  0 &  0 & 225$\times$ \\
+      & QF\_LRA   &      703 &      525 &      525 &      417 &     108 &  0 &  0 & 92$\times$ \\
+      & QF\_UFIDL &      422 &       38 &       38 &       30 &       8 &  0 &  0 & 2$\times$ \\
+      & QF\_UFLIA &      192 &      172 &      172 &      163 &       7 &  0 &  0 & 248$\times$ \\
+      & QF\_UFLRA &      511 &      441 &      441 &      432 &       9 &  0 &  0 & 27$\times$ \\
+      & UF        &   3\,505 &   3\,155 &   3\,155 &   3\,146 &       7 &  2 &  0 & 358$\times$ \\
+      & UFIDL     &       53 &       53 &       53 &       53 &       0 &  0 &  0 & 700$\times$ \\
+      & UFLIA     &   7\,793 &   7\,444 &   7\,443 &   7\,410 &      12 &  0 &  0 & 210$\times$ \\
+      & UFLRA     &       10 &       10 &       10 &       10 &       0 &  0 &  0 & --- \\
     \cmidrule(l){2-10}
-      & total     & 23\,328 & 19\,195 & 19\,194 & 16\,853 & 2\,287 & 5 & 2 & 213$\times$ \\
+      & total     &  23\,328 &  19\,191 &  19\,190 &  16\,813 &  2\,327 &  8 &  0 & 214$\times$ \\
     \midrule
     \multirow{13}{*}{\verit}
-      & QF\_UF    & 4\,361 & 4\,189 & 4\,175 & 2\,446 & 1\,729 &  0 &  0 &  506$\times$ \\
-      & QF\_IDL   &    917 &    635 &    538 &    222 &    293 & 14 &  0 &   52$\times$ \\
-      & QF\_RDL   &    113 &     87 &     28 &     15 &     13 &  0 &  0 & 3\,699$\times$ \\
-      & QF\_LIA   & 4\,748 & 2\,606 & 2\,314 & 2\,220 &    187 & 17 & 10 &  698$\times$ \\
-      & QF\_LRA   &    703 &    579 &    387 &    282 &    105 &  0 &  0 &  167$\times$ \\
-      & QF\_UFIDL &    422 &    270 &     64 &     47 &     16 &  0 &  0 &  499$\times$ \\
-      & QF\_UFLIA &    192 &    173 &    130 &    172 &      1 &  0 &  0 &  620$\times$ \\
-      & QF\_UFLRA &    511 &    415 &      3 &      3 &      0 &  0 &  0 & --- \\
-      & UF        & 3\,505 & 2\,897 & 2\,881 & 2\,860 &      3 & 16 &  1 &  457$\times$ \\
-      & UFIDL     &     53 &     51 &     51 &     51 &      0 &  0 &  0 & 1\,290$\times$ \\
-      & UFLIA     & 7\,793 & 7\,255 & 7\,242 & 7\,006 &    147 & 17 & 43 &  524$\times$ \\
-      & UFLRA     &     10 &     10 &     10 &     10 &      0 &  0 &  0 & --- \\
+      & QF\_UF    &   4\,361 &   4\,188 &   4\,174 &   2\,437 &  1\,737 &  0 &  0 & 543$\times$ \\
+      & QF\_IDL   &      917 &      635 &      538 &      218 &     303 &  8 &  0 & 62$\times$ \\
+      & QF\_RDL   &      113 &       87 &       77 &       37 &      40 &  0 &  0 & 94$\times$ \\
+      & QF\_LIA   &   4\,748 &   2\,604 &   2\,327 &   2\,229 &     210 &  7 & 10 & 715$\times$ \\
+      & QF\_LRA   &      703 &      579 &      578 &      424 &     154 &  0 &  0 & 176$\times$ \\
+      & QF\_UFIDL &      422 &      270 &      265 &       67 &     165 &  0 &  0 & 599$\times$ \\
+      & QF\_UFLIA &      192 &      173 &      130 &      171 &       2 &  0 &  0 & 664$\times$ \\
+      & QF\_UFLRA &      511 &      415 &      415 &      349 &      66 &  0 &  0 & 91$\times$ \\
+      & UF        &   3\,505 &   2\,897 &   2\,881 &   2\,861 &       3 & 16 &  1 & 451$\times$ \\
+      & UFIDL     &       53 &       51 &       51 &       51 &       0 &  0 &  0 & 1\,479$\times$ \\
+      & UFLIA     &   7\,793 &   7\,255 &   7\,242 &   7\,016 &     147 & 18 & 37 & 530$\times$ \\
+      & UFLRA     &       10 &       10 &       10 &       10 &       0 &  0 &  0 & --- \\
     \cmidrule(l){2-10}
-      & total     & 23\,328 & 19\,167 & 17\,823 & 15\,334 & 2\,494 & 64 & 54 & 497$\times$ \\
+      & total     &  23\,328 &  19\,164 &  18\,688 &  15\,870 &  2\,827 & 49 & 48 & 496$\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -642,24 +659,25 @@ issue.
 \paragraph{Against \carcara.} Figure~\ref{fig:smtlib} plots, per proof,
 \carcara's check of the solver's proof against the elaboration plus the
 checker's check of the elaborated one. On the benchmarks \emph{both} validate
---- 12\,773 for \cvcv and 9\,148 for \verit --- the checker is a median of
-213$\times$ and 497$\times$ slower (geometric mean 189$\times$ and
-516$\times$; ninetieth percentile 435$\times$ and 1\,184$\times$).
+--- 12\,733 for \cvcv and 9\,559 for \verit --- the checker is a median of
+214$\times$ and 496$\times$ slower (geometric mean 191$\times$ and
+498$\times$; ninetieth percentile 433$\times$ and 1\,193$\times$).
 Elaboration is not what costs: comparing the two checks alone moves the
-medians to 212$\times$ and 495$\times$. The factor varies by an order of
+medians to 212$\times$ and 494$\times$. The factor varies by an order of
 magnitude across logics (last column of Table~\ref{tab:smtlib}), and it is
-smallest exactly where the proofs are largest --- 135$\times$ in QF\_UF
-against 369$\times$ in UF --- because the checker pays a fixed five-second
+smallest exactly where the proofs are largest --- 140$\times$ in QF\_UF
+against 358$\times$ in UF --- because the checker pays a fixed five-second
 cost to load its library that dominates on the small proofs of the quantified
 logics, while \carcara, at a median of 0.04\,s (\cvcv) and 0.01\,s (\verit)
 over the round, is nearly free there. In QF\_UF the medians are 0.78\,s
-against 52\,s and 0.14\,s against 45\,s, and the timeouts sit above proofs
-\carcara disposes of in a second or two. Over the round \carcara spends 9.6
-and 6.5 CPU hours and the checker 198 and 143. That is the price of a proof
+against 54\,s and 0.14\,s against 48\,s, and the timeouts sit above proofs
+\carcara disposes of in a second or two. Over the round \carcara spends 9.7
+and 8.9 CPU hours and the checker 199 and 188. That is the price of a proof
 term the kernel accepts, and it makes the interesting question not whether the
 checker competes with a dedicated one but how far up the size distribution it
-reaches: the timeouts start around 20\,000 elaborated steps and are the rule
-above 50\,000.
+reaches: below 10\,000 elaborated steps the checker times out on 0.4\% of
+\cvcv proofs and 1.3\% of \verit ones, between 20\,000 and 50\,000 on 73\%
+and 93\%, and above 50\,000 on essentially all of them.
 
 \begin{figure}[t]
   \centering
@@ -679,43 +697,84 @@ benchmarks it validated, in the style of the \tactic paper. The checker
 follows \carcara closely over the first thousands of benchmarks --- the small
 proofs of the quantified logics, where both are dominated by the solving ---
 and then separates in slope and in where it stops. Within the whole budget
-\carcara needs for every proof it accepts, solving included (26.5 CPU hours
-for \cvcv, 14.3 for \verit), the checker validates the first 12\,661 and
-10\,464 of them.
+\carcara needs for every proof it accepts, solving included (26.7 CPU hours
+for \cvcv, 18.5 for \verit), the checker validates the first 12\,661 and
+11\,512 of them.
 
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.72\textwidth]{cactus-smtlib}
   \caption{Cumulative solving and checking time against the number of SMT-LIB
     benchmarks whose proof the configuration validated. \carcara validates
-    19\,194 \cvcv proofs in 26.5 CPU hours and 17\,823 \verit proofs in 14.3;
-    the checker validates 16\,853 and 15\,334 in 205 and 147.}
+    19\,190 \cvcv proofs in 26.7 CPU hours and 18\,688 \verit proofs in 18.5;
+    the checker validates 16\,813 and 15\,870 in 206 and 192.}
   \label{fig:cactus}
 \end{figure}
 
 \paragraph{What is left.} Rule coverage is essentially complete and the
-residue is small enough to enumerate. \cvcv leaves two proofs, both QF\_IDL
-bounded-model-checking instances whose \rulename{evaluate} steps equate ground
-Boolean formulas containing equalities between propositions --- \texttt{=} on
-\texttt{Prop} has no computable decidability instance, so \texttt{decide}
-could not run and there was no atom to case-split on; the reconstructor now
-rewrites those equalities to \texttt{↔} and evaluates. \verit leaves 54: 33
-\rulename{distinct\_elim} steps over the large enumerations of the ESC/Java
-benchmarks, where the pairwise conversion embedded the whole conjunct list in
-each of $n^2$ projections and exhausted the kernel's memory, now proved by
-congruence on the conjunction; 9 \rulename{bool\_simplify} steps \carcara's
-core pass had left unreduced (Section~\ref{sec:carcara}); 2
-\rulename{qnt\_rm\_unused} over an existential, which the universal
-reconstruction could not close; and 10 \rulename{lia\_generic}, \verit's
-oracle rule, closed by \texttt{omega} when in its fragment and trusted
-otherwise. The 5 and 64 memory exhaustions are the same phenomenon as the
-timeouts, one step too large rather than too many steps. All but
-\rulename{lia\_generic} are fixed, with a regression test each, and the
-same benchmark that surfaced the \rulename{evaluate} case also carried
-\rulename{ac\_simp} steps over nested layers with an annihilator, which is
-what motivated the structural rules. The rest is scale: the timeouts, whose
-remedy is the reflective resolution checker described in the accompanying
-notes, not a rule.
+residue is small enough to enumerate. \cvcv leaves no proof with a trusted
+step at all. \verit leaves 48: 32 \rulename{distinct\_elim} steps over the
+large enumerations of the ESC/Java benchmarks, 10 \rulename{lia\_generic},
+\verit's oracle rule, closed by \texttt{omega} when in its fragment and
+trusted otherwise, and 6 \rulename{th\_resolution}. Every case the previous
+round left except \rulename{lia\_generic} has a fix and a regression test:
+\rulename{evaluate} over equalities between propositions, where \texttt{=} on
+\texttt{Prop} has no computable decidability instance, is now rewritten to
+\texttt{↔} before evaluating; \rulename{distinct\_elim}'s pairwise conversion,
+which embedded the whole conjunct list in each of $n^2$ projections, is now
+proved by congruence on the conjunction; and the
+\rulename{bool\_simplify} steps \carcara's core pass had left unreduced are
+reduced (Section~\ref{sec:carcara}). The 50 and 116 errors are not the same
+phenomenon as the timeouts, as the previous round assumed of the memory
+exhaustions among them; Section~\ref{sec:revealed} takes them apart. The rest is scale: the timeouts, whose remedy is the
+reflective resolution checker described in the accompanying notes, not a rule.
+
+\subsection{Where the Time Goes, Rule by Rule}
+\label{sec:perrule}
+
+The 214$\times$ and 496$\times$ of the previous section are whole-proof
+figures, and they say nothing about which steps are expensive. Because the
+round checks the \emph{elaborated} proof twice --- once with \carcara, once
+with the checker --- the two can be compared step for step over the same
+population. Figure~\ref{fig:rules} draws, for the rules that carry the most
+total time, the distribution over benchmarks of the mean time per step of that
+rule.
+
+The distributions are wide but the ordering is stable, and three things stand
+out. First, the gap is not uniform: it runs from about 150$\times$ on
+\rulename{rare\_rewrite} and \rulename{distinct\_elim}, where the checker
+replays a rewrite it can name, to four or five orders of magnitude on the
+small clausal rules --- \rulename{and}, \rulename{or\_neg},
+\rulename{equiv\_pos2} --- where \carcara compares two
+arrays and the checker builds and kernel-checks a term. Those rules are cheap
+per step for both, but they are the most numerous by an order of magnitude
+(84\,M \rulename{cong} and 178\,M \rulename{resolution} steps in the round),
+so the ratio there is what sets the whole-proof figure.
+
+Second, one rule dominates the total: \rulename{resolution} is 51\% of the
+checker's time, and \rulename{and} a further 14\%. This is the quantitative
+form of the claim that the remedy for the timeouts is a reflective resolution
+checker rather than better rule reconstructions --- no amount of work on the
+arithmetic or rewriting rules moves a number half of which is one rule.
+
+Third, the structural AC rules that replaced \rulename{aci\_simp}
+(Section~\ref{sec:carcara}) are cheap on both sides:
+\rulename{semilattice\_simp} at a median of 3.3\,ms and \rulename{poly\_simp}
+at 12\,ms for the checker, with a ratio under 1\,000$\times$, better than the
+clausal rules they are glued to. Splitting \rulename{aci\_simp} into rules
+with a normal form did not cost checking time.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{rule-boxplots}
+  \caption{Mean time per step of each rule, over the benchmarks whose
+    elaborated proof both checkers accept, for the fourteen rules with the
+    largest total time. Boxes are the quartiles and whiskers the 5th and 95th
+    percentiles; the label above each group is the rule's total step count in
+    the round. Note the log scale: the two \carcara series sit three to four
+    decades below the two \tactic ones.}
+  \label{fig:rules}
+\end{figure}
 
 \subsection{The Sledgehammer Set}
 \label{sec:seventeen}
@@ -733,8 +792,11 @@ close to total: the checker validates 2\,858 of the 2\,868 \cvcv proofs
 one and three timeouts and, for \verit, 21 runs that exhausted the memory.
 What limits the round is the solver, not the checker --- 2\,869 and 2\,681 of
 the 5\,000 problems are proved unsatisfiable at all --- and, for \verit,
-\carcara's own check, which rejects 83 proofs, the same integer/real parser
-defect and \rulename{lia\_generic} steps as in the SMT-LIB round.
+\carcara's own check, which rejects 83 proofs, the integer/real parser
+defect and \rulename{lia\_generic} steps. This corpus was last run before that
+parser fix and the \rulename{ac\_simp} one; the SMT-LIB round above is the
+current toolchain, and the \verit numbers here are correspondingly
+pessimistic.
 
 \begin{table}[t]
   \centering
@@ -821,6 +883,7 @@ equivalent \rulename{bind}s that \carcara's \texttt{polyeq} now closes by
 \rulename{refl} remove every other instance of the pattern.
 
 \subsection{What the Proofs Revealed}
+\label{sec:revealed}
 
 Checking against a second, independent reading of the rules paid off in both
 directions. On the producer side: \verit's open named terms, its identity
@@ -845,6 +908,54 @@ between two equalities, \rulename{distinct\_elim} over Booleans, both forms
 of \rulename{la\_tautology}, the empty clause from \texttt{(not true)}, and
 \rulename{lia\_generic} by \texttt{omega}. Every finding is a regression
 test.
+
+\paragraph{The failures the round leaves.} Beyond the timeouts, 50 \cvcv and
+116 \verit runs end in an error, and they are four distinct defects of the
+checker's front end rather than of any rule. Three are now fixed.
+
+\emph{Symbols with an apostrophe} (22 \cvcv and 27 \verit proofs, in UFLIA's
+\texttt{tokeneer} and QF\_IDL's \texttt{sep}). \carcara's lexer admits
+\texttt{'} inside a simple symbol so that the variables its
+capture-avoiding substitutions rename (\texttt{x'}) round-trip, and its
+printer decided what to quote with the same predicate. A symbol read from a
+quoted \texttt{|status'|} was therefore printed back bare, which the SMT-LIB
+grammar does not allow, so the elaborated proof was rejected by
+\cvcv's parser --- the checker's own reader --- with \emph{Symbol `status' not
+declared as a variable}. The printer now quotes any symbol containing an
+apostrophe; quoting is always safe, since \texttt{|s|} and \texttt{s} denote
+the same symbol.
+
+\emph{Problems with more declarations than the interpreter's stack}
+(5 \cvcv proofs, QF\_LIA's \texttt{SharedMemory} and \texttt{wireRouting}).
+Lean's \texttt{withLocalDecls} nests one \texttt{withLocalDecl} per
+declaration, so introducing the 160\,000 symbols and 280\,000 assertions of
+those problems overflowed the interpreter's stack after minutes of work. A
+flat variant that extends the local context in a loop and installs it once
+checks the 15\,MB benchmark in 190\,s.
+
+\emph{A resolution loop} (2 of the 8 \cvcv memory exhaustions). Alethe's
+resolution removes \emph{every} occurrence of the pivot, so the chain
+re-resolves while the working clause still holds it. Against a tautological
+premise \texttt{(cl $l$ (not $l$))}, which \cvcv emits for
+\rulename{not\_equiv2}-style splits, each pass erased the pivot and the
+premise put it straight back: two million iterations before the memory cap.
+The loop now stops when the premise contributes the pivot with the working
+clause's own polarity. The remaining 6, and \verit's 49, are one step too
+large rather than a loop.
+
+Two groups are not fixed. 15 \cvcv proofs, 13 of them in QF\_LIA's
+\texttt{incrementalScheduling}, need higher-order reasoning the checker does
+not have: \cvcv keeps a parameterised \texttt{define-fun} as an uninterpreted
+symbol plus an assumption equating it to a \texttt{lambda}, rewrites inside
+that lambda under a \rulename{bind}, and applies the result with
+\rulename{ho\_cong}. The checker macro-expands definitions, so the unapplied
+symbol means nothing to it, and it has no \rulename{ho\_cong}; these are the
+only proofs in the round that use the rule. Supporting them means binding
+\texttt{define-fun}s as functions rather than expanding them. And 40 \verit
+proofs, 30 in QF\_UFIDL's \texttt{pete2}, fail to synthesize a
+\texttt{Decidable} instance for a deeply nested ground \texttt{ite} chain over
+integer differences --- a \rulename{evaluate}-adjacent case where the term is
+decidable in principle but instance search does not get there.
 
 \section{Per-Step Against One-Term Submission}
 \label{sec:shapes}
@@ -939,9 +1050,7 @@ benchmark is a matched pair.
     validated with no trusted step and timeouts, per arm; then the paired
     verdicts --- validated by \emph{both} arms, by the plain arm only, by
     \texttt{native} only. The outcomes not shown are the same for both arms
-    (5 and 64 memory failures, 2 and 54 proofs with a trusted step), but for
-    one \verit proof that is holey per step and exhausts memory under
-    \texttt{native}. The last column is the median ratio of \texttt{native}'s
+    (8 and 49 memory failures, 0 and 48 proofs with a trusted step). The last column is the median ratio of \texttt{native}'s
     CPU time to the plain arm's, over the proofs both validate.}
   \label{tab:native}
   \small
@@ -955,60 +1064,56 @@ benchmark is a matched pair.
       & ratio \\
     \midrule
     \multirow{13}{*}{\cvcv}
-      & QF\_UF    & 2\,527 & 1\,763 & 2\,528 & 1\,762 & 2\,526 & 1 &  2 & 0.995 \\
-      & QF\_IDL   &    276 &    196 &    276 &    196 &    276 & 0 &  0 & 0.947 \\
-      & QF\_RDL   &     39 &     35 &     42 &     32 &     39 & 0 &  3 & 0.841 \\
-      & QF\_LIA   & 2\,341 &    152 & 2\,354 &    139 & 2\,341 & 0 & 13 & 0.851 \\
-      & QF\_LRA   &    425 &    101 &    430 &     96 &    422 & 3 &  8 & 0.856 \\
-      & QF\_UFIDL &     30 &      8 &     30 &      8 &     30 & 0 &  0 & 0.953 \\
-      & QF\_UFLIA &    166 &      4 &    166 &      4 &    166 & 0 &  0 & 0.872 \\
-      & QF\_UFLRA &    432 &      9 &    433 &      8 &    432 & 0 &  1 & 0.964 \\
-      & UF        & 3\,145 &      7 & 3\,145 &      7 & 3\,145 & 0 &  0 & 0.919 \\
-      & UFIDL     &     53 &      0 &     53 &      0 &     53 & 0 &  0 & 0.930 \\
-      & UFLIA     & 7\,409 &     12 & 7\,409 &     12 & 7\,409 & 0 &  0 & 0.913 \\
-      & UFLRA     &     10 &      0 &     10 &      0 &     10 & 0 &  0 & 0.927 \\
+      & QF\_UF    &   2\,509 &  1\,780 &   2\,506 &  1\,783 &   2\,505 &  4 &  1 & 0.993 \\
+      & QF\_IDL   &      271 &     202 &      271 &     202 &      271 &  0 &  0 & 0.956 \\
+      & QF\_RDL   &       38 &      35 &       39 &      34 &       38 &  0 &  1 & 0.830 \\
+      & QF\_LIA   &   2\,334 &     159 &   2\,347 &     146 &   2\,334 &  0 & 13 & 0.848 \\
+      & QF\_LRA   &      417 &     108 &      421 &     104 &      416 &  1 &  5 & 0.854 \\
+      & QF\_UFIDL &       30 &       8 &       30 &       8 &       30 &  0 &  0 & 0.944 \\
+      & QF\_UFLIA &      163 &       7 &      164 &       6 &      163 &  0 &  1 & 0.886 \\
+      & QF\_UFLRA &      432 &       9 &      432 &       9 &      431 &  1 &  1 & 0.966 \\
+      & UF        &   3\,146 &       7 &   3\,146 &       7 &   3\,146 &  0 &  0 & 0.919 \\
+      & UFIDL     &       53 &       0 &       53 &       0 &       53 &  0 &  0 & 0.926 \\
+      & UFLIA     &   7\,410 &      12 &   7\,410 &      12 &   7\,410 &  0 &  0 & 0.908 \\
+      & UFLRA     &       10 &       0 &       10 &       0 &       10 &  0 &  0 & 0.867 \\
     \cmidrule(l){2-10}
-      & total     & 16\,853 & 2\,287 & 16\,876 & 2\,264 & 16\,849 & 4 & 27 & 0.92 \\
+      & total     &  16\,813 &  2\,327 &  16\,829 &  2\,311 &  16\,807 &  6 & 22 & 0.92 \\
     \midrule
     \multirow{13}{*}{\verit}
-      & QF\_UF    & 2\,446 & 1\,729 & 2\,447 & 1\,728 & 2\,445 & 1 & 2 & 0.990 \\
-      & QF\_IDL   &    222 &    293 &    224 &    291 &    222 & 0 & 2 & 0.975 \\
-      & QF\_RDL   &     15 &     13 &     20 &      8 &     15 & 0 & 5 & 0.727 \\
-      & QF\_LIA   & 2\,220 &    187 & 2\,220 &    187 & 2\,220 & 0 & 0 & 0.871 \\
-      & QF\_LRA   &    282 &    105 &    283 &    104 &    282 & 0 & 1 & 0.923 \\
-      & QF\_UFIDL &     47 &     16 &     47 &     16 &     47 & 0 & 0 & 0.977 \\
-      & QF\_UFLIA &    172 &      1 &    172 &      1 &    172 & 0 & 0 & 0.939 \\
-      & QF\_UFLRA &      3 &      0 &      3 &      0 &      3 & 0 & 0 & 0.844 \\
-      & UF        & 2\,860 &      3 & 2\,860 &      3 & 2\,860 & 0 & 0 & 0.907 \\
-      & UFIDL     &     51 &      0 &     51 &      0 &     51 & 0 & 0 & 0.957 \\
-      & UFLIA     & 7\,006 &    147 & 7\,006 &    147 & 7\,006 & 0 & 0 & 0.920 \\
-      & UFLRA     &     10 &      0 &     10 &      0 &     10 & 0 & 0 & 0.866 \\
+      & QF\_UF    &   2\,437 &  1\,737 &   2\,440 &  1\,734 &   2\,436 &  1 &  4 & 0.988 \\
+      & QF\_IDL   &      218 &     303 &      219 &     302 &      217 &  1 &  2 & 0.981 \\
+      & QF\_RDL   &       37 &      40 &       41 &      36 &       37 &  0 &  4 & 0.943 \\
+      & QF\_LIA   &   2\,229 &     210 &   2\,218 &     220 &   2\,218 & 11 &  0 & 0.868 \\
+      & QF\_LRA   &      424 &     154 &      428 &     150 &      424 &  0 &  4 & 0.867 \\
+      & QF\_UFIDL &       67 &     165 &       67 &     164 &       67 &  0 &  0 & 0.990 \\
+      & QF\_UFLIA &      171 &       2 &      171 &       2 &      171 &  0 &  0 & 0.948 \\
+      & QF\_UFLRA &      349 &      66 &      348 &      67 &      348 &  1 &  0 & 1.003 \\
+      & UF        &   2\,861 &       3 &   2\,861 &       3 &   2\,861 &  0 &  0 & 0.905 \\
+      & UFIDL     &       51 &       0 &       51 &       0 &       51 &  0 &  0 & 0.941 \\
+      & UFLIA     &   7\,016 &     147 &   7\,016 &     147 &   7\,016 &  0 &  0 & 0.918 \\
+      & UFLRA     &       10 &       0 &       10 &       0 &       10 &  0 &  0 & 0.882 \\
     \cmidrule(l){2-10}
-      & total     & 15\,334 & 2\,494 & 15\,343 & 2\,485 & 15\,333 & 1 & 10 & 0.92 \\
+      & total     &  15\,870 &  2\,827 &  15\,870 &  2\,825 &  15\,856 & 14 & 14 & 0.92 \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \paragraph{Outcomes.} Table~\ref{tab:native} gives the round per logic.
-\texttt{native} validates 23 more \cvcv proofs (16\,876 against 16\,853) and 9
-more \verit ones (15\,343 against 15\,334), a tenth of a percent of either
-population, and the gain is timeouts avoided: 2\,287 fall to 2\,264 and 2\,494
-to 2\,485. Nothing else moves. The memory failures are the same 5 and 64 runs,
-the proofs with a trusted step the same 2 and 54 --- except that one \verit
-proof reported holey per step exhausts memory under \texttt{native} instead,
-the single outcome on the corpus that the variant makes worse.
+\texttt{native} validates 16 more \cvcv proofs (16\,829 against 16\,813) and
+exactly as many \verit ones (15\,870), a tenth of a percent of either
+population at most, and what gain there is is timeouts avoided: 2\,327 fall to
+2\,311 and 2\,827 to 2\,825. Nothing else moves. The memory failures are the
+same 8 and 49 runs, the proofs with a trusted step the same 0 and 48, and no
+proof's trusted-step count differs between the arms.
 
 \paragraph{Paired.} Figure~\ref{fig:native} puts the two arms on the same
 proof. Per logic the two columns of validated proofs are equal or differ by a
-handful, and the paired counts say why: 16\,849 (\cvcv) and 15\,333 (\verit)
-proofs are validated by both arms, 27 and 10 by \texttt{native} only, 4 and 1
-by the plain arm only. Both asymmetries sit against the limit. The proofs only
-\texttt{native} validates are elaborated derivations of 3\,700 to 84\,000
-steps, arithmetic but for four, that the plain arm leaves running at 898\,s
-and \texttt{native} finishes between 468 and 899\,s; the five in the other
-direction are proofs the plain arm finished at 853 to 883\,s and
-\texttt{native} did not finish at all. What separates the arms is how close a
-proof already was to the timeout, not what either can check.
+handful, and the paired counts say why: 16\,807 (\cvcv) and 15\,856 (\verit)
+proofs are validated by both arms, 22 and 14 by \texttt{native} only, 6 and 14
+by the plain arm only. Both asymmetries sit against the limit: every proof
+either arm wins alone is one the other left running at the 900\,s mark. What
+separates the arms is how close a proof already was to the timeout, not what
+either can check.
 
 \begin{figure}[t]
   \centering
@@ -1024,19 +1129,19 @@ proof already was to the timeout, not what either can check.
 \end{figure}
 
 \paragraph{Where the time goes.} On the proofs both arms validate,
-\texttt{native} is faster on 90.9\% (\cvcv) and 93.4\% (\verit) of them, and
+\texttt{native} is faster on 91.5\% (\cvcv) and 92.1\% (\verit) of them, and
 the median ratio of its CPU time to the plain arm's is 0.92 for both solvers,
-with the middle half of the proofs between 0.87 and 0.97. Summed, 193.3 CPU hours become 184.4 and 141.4
-become 138.2. Figure~\ref{fig:nativekernel} isolates the kernel's share of
-that: its median falls from 645 to 444\,ms per \cvcv proof and from 534 to
-458\,ms per \verit one, 130.4 CPU hours to 118.5 and 93.7 to 90.5, but it
-still accounts for 64\% and 65\% of each arm's time against 67\% and 66\%
-before. The saving is a slice of the kernel's work rather than most of it,
+with the middle half of the proofs between 0.87 and 0.97. Summed, 194.1 CPU
+hours become 185.8 and 182.7 become 179.0. Figure~\ref{fig:nativekernel}
+isolates the kernel's share of that: its median falls from 650 to 448\,ms per
+\cvcv proof and from 596 to 510\,ms per \verit one, 124.7 CPU hours to 113.8
+and 125.0 to 120.8, but it still accounts for 61\% and 68\% of each arm's time
+against 64\% and 68\% before. The saving is a slice of the kernel's work rather than most of it,
 because what the kernel spends its time on is the resolution chains and the
 congruences, which \texttt{native} does not touch. The per-logic medians of
-the last column of Table~\ref{tab:native} locate the gain exactly: 0.84 to
-0.86 in \cvcv's QF\_LIA, QF\_LRA and QF\_RDL, where the normalizer runs on
-every arithmetic step, against 0.995 and 0.990 in QF\_UF, where it never runs
+the last column of Table~\ref{tab:native} locate the gain exactly: 0.83 to
+0.85 in \cvcv's QF\_LIA, QF\_LRA and QF\_RDL, where the normalizer runs on
+every arithmetic step, against 0.993 and 0.988 in QF\_UF, where it never runs
 at all.
 
 \begin{figure}[!tb]

@@ -1,0 +1,2 @@
+proof_file,run_id,parsing,checking,elaboration,total_accounted_for,total,polyeq,polyeq_ratio,assume,assume_ratio,reconstruct,kernel,setup,steps,checked,trusted,holes,kernel_split
+/home/hbarbosa/lean/lean-smt/perturbations_0.onnxhyperrectangle_1684.vnnlib.smt2.alethe,0,2583860983,25447050157,0,28030911140,28031027588,0,0.000000,49005390,0.001926,18152311671,7294738486,499351549,6913,6913,0,0,0

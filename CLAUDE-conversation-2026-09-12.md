@@ -988,3 +988,45 @@ Probed `UF/sledgehammer/Hoare/smtlib.689154` (2 KB problem, 560-step / 153 KB el
 **lean-smt `e9c32bf`, `6734243`.** `smtlib.689154`: 900 s timeout → valid in 2.0 s; `uf.828950` (another of the 40): valid in 2.0 s. Regression set (coinductive_list ×3, tokeneer, SharedMemory RC-06 at 198 s) all valid; `lake test` 142 passing.
 
 Toolchain for the next drop: Carcara `29a8e966`, lean-smt `6734243`. Round six keeps running on the round-six binaries.
+
+## Turn: 2026-09-12 23:06:56 (session bddaeda3)
+
+All 42 errors are root-caused, three of the four causes are fixed, and the investigation also removed a long-standing timeout class. Round six is still running on the cluster with the old binaries.
+
+**The 42 Lean errors**
+
+- **35 parse errors, two causes.** 21 (tokeneer, one QF_IDL) were Carcara printing symbols with an apostrophe unquoted. Fixed in Carcara `29a8e966`, pushed, suite 412. All 20 locally available proofs check valid. The other 14 (QF_LIA/ezsmt) are cvc5 keeping a parameterised `define-fun` as a symbol plus a lambda assumption and reasoning about it with `bind`, `trans` and `ho_cong`. lean-smt macro-expands definitions and has no `ho_cong`. Not fixed. It needs define-funs as let-bound functions plus an `ho_cong` reconstructor, a design decision for you.
+- **5 deep recursions** were problems with 160k symbols and 280k assertions overflowing the interpreter stack in Lean's nested `withLocalDecls`. Fixed in lean-smt `3cc44fa` with a flat variant. The 15 MB benchmark now checks valid in 190 s.
+- **2 memory exceptions** were an infinite loop in resolution: a tautological premise holding both the pivot and its negation put the pivot back on every pass, 2.2 million times. Fixed in lean-smt `4a37a9b`. Both proofs check valid in about a second.
+
+**The small-proof timeouts, a bonus.** 40 of the 334 Lean timeouts have proofs under 2,000 steps and were timeouts in round four too. One sledgehammer proof exposed three super-linear costs in sequence: the parser re-resolving named terms per binder scope (80 s), the realization treating every quantified formula as open and sending cvc5 a 144 MB string, and reconstruction rebuilding closed subterms under every binder. Fixed in lean-smt `e9c32bf` and `6734243`. That proof went from a 900 s timeout to 2 s, and a second one from the same group also checks in 2 s.
+
+**Verification.** lake test passes all 142 tests. A regression set of six previously valid proofs, including the huge SharedMemory one, is still valid.
+
+**Cluster.** cvc5 is at 18,718 of 23,328 tasks, in the slow tail. veriT is still fully queued. Nothing on the cluster was touched.
+
+**Next toolchain** for round seven is Carcara `29a8e966` and lean-smt `6734243`. Everything is in the log, commit `bd00e4f`.
+
+## Round six finished, and the report is on it
+
+Both jobs completed (cvc5 23:30, veriT 09:38 the next day), 23,328 tasks each, queue empty.
+
+| | cvc5 four | cvc5 six | veriT four | veriT six |
+|---|---|---|---|---|
+| proofs printed | 19,195 | 19,191 | 19,167 | 19,164 |
+| carcara valid | 19,194 | **19,190** | 17,823 | **18,688** |
+| lean valid | 16,853 | 16,813 | 15,334 | **15,870** |
+| lean timeout | 2,287 | 2,327 | 2,494 | 2,827 |
+| lean holey | 2 | **0** | 54 | **48** |
+| lean error | 47 | 50 | 99 | 116 |
+
+The veriT gain is the point: **carcara's gap falls 1,344 → 476**, and the checker gains 536 proofs. Paired attribution of the 871 newly accepted: 650 the int/real subtyping fix, 190 the ac_simp premise fix, 31 other. cvc5 loses 45 valid→timeout, all of which ran 441–900 s in round four against a 900 s limit; timings are otherwise identical (median wall six/four 1.02, carcara check ratio 1.00), so it is boundary noise, not a regression.
+
+**Zero holey cvc5 proofs** — the structural-AC work is complete on that side. veriT's 48 are distinct_elim 32, lia_generic 10, th_resolution 6.
+
+**The 27 surviving carcara rejections** are the same 24 benchmarks as round four plus three newly reachable: veriT emits `and_simplify` whose left side is not a conjunction, e.g. `(not (= (of_bool$ false) (of_bool$ true)))`. Not mine to fix. The 48→102 rise in the *count* is the attribution helper reading past the byte cap, not more failures.
+
+### Report updated
+`docs-alethe/alethe-lean-smt.tex`, 23 pages, builds clean. Table 1, Table 3 (native) and all five figures regenerated from round six; new `report-table.py` emits the table body and the prose figures so the next round is a re-run, not a retype. New **§2.2 "Where the Time Goes, Rule by Rule"** with the box plots you asked for: resolution is 51% of the checker's time and `and` another 14%, the gap runs 150× (rare_rewrite, distinct_elim) to 10,000× (the small clausal rules), and the structural AC rules are cheap on both sides. §2.4 now takes apart the four front-end defects behind the errors, three fixed here and `ho_cong` left open.
+
+Also corrected: QF_LIA was never "99% complete", it is 93%; the Sledgehammer corpus predates the two carcara fixes and now says so.
