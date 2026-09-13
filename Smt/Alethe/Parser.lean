@@ -8,6 +8,8 @@ Authors: Haniel Barbosa
 module
 
 public import Smt.Alethe.Syntax
+public import Std.Data.HashSet
+public meta import Std.Data.HashSet
 
 @[expose] public section
 
@@ -57,6 +59,11 @@ structure State where
   named : Std.HashMap String Sexp := {}
   /-- Resolutions of named terms per environment (name, environment id ↦ node). -/
   namedCache : Std.HashMap (String × Nat) Nat := {}
+  /-- Every atom a named term can mention, through the names it uses (name ↦ atoms). -/
+  namedAtoms : Std.HashMap String (Std.HashSet String) := {}
+  /-- Resolutions of named terms in environments binding none of their atoms: one node serves
+      every such environment, since nothing in the term depends on it. -/
+  closedCache : Std.HashMap String Nat := {}
   /-- Environment identities handed out so far (`0` is the top level). -/
   envs : Nat := 0
   /-- Anchor variables renamed so far (fresh symbol ↦ original name). -/
@@ -155,6 +162,33 @@ def instantiate (params : Array String) (args : Array Nat) (body : Nat) : M Nat 
   let m := (params.zip args).foldl (fun m (x, a) => m.insert x a) {}
   (substBound m body).run' {}
 
+/-- The free atoms of an S-expression: every atom but the variables its own binders (`forall`,
+    `exists`, `choice`, `lambda`, `let`) bind, scoped as the binders scope them. -/
+partial def atomsOf (s : Sexp) (acc : Std.HashSet String) (bound : List String := []) :
+    Std.HashSet String :=
+  match s with
+  | .atom a =>
+    let a := canonSymbol a
+    if bound.contains a then acc else acc.insert a
+  | .expr [.atom q, .expr bs, body] =>
+    if binderKeywords.contains q then
+      -- `(q ((x S) …) body)`: sorts are free atoms, the variables are bound in the body
+      let (names, acc) := bs.foldl (init := ([], acc)) fun (names, acc) b =>
+        match b with
+        | .expr [.atom x, sort] => (canonSymbol x :: names, atomsOf sort acc bound)
+        | other => (names, atomsOf other acc bound)
+      atomsOf body acc (names ++ bound)
+    else if q == "let" then
+      -- `(let ((x t) …) body)`: parallel, the values in the outer scope
+      let (names, acc) := bs.foldl (init := ([], acc)) fun (names, acc) b =>
+        match b with
+        | .expr [.atom x, t] => (canonSymbol x :: names, atomsOf t acc bound)
+        | other => (names, atomsOf other acc bound)
+      atomsOf body acc (names ++ bound)
+    else
+      [Sexp.atom q, .expr bs, body].foldl (fun acc x => atomsOf x acc bound) acc
+  | .expr xs => xs.foldl (fun acc x => atomsOf x acc bound) acc
+
 /-- Turn a term into an arena node under the binding environment. -/
 partial def term (env : Env) : Sexp → M Nat
   | .atom s => do
@@ -165,6 +199,18 @@ partial def term (env : Env) : Sexp → M Nat
     | none =>
       if let some n := (← get).namedCache[(s, env.id)]? then return n
       if let some t := (← get).named[s]? then
+        -- Resolving a named term anew under every binder scope is what makes the parser
+        -- super-linear on quantifier-heavy proofs (a 150 KB sledgehammer proof took 80 s here):
+        -- a term that mentions none of the scope's variables means the same everywhere
+        let st ← get
+        let closed := match st.namedAtoms[s]? with
+          | some atoms => env.vars.isEmpty || !env.vars.keys.any (atoms.contains ·)
+          | none => false
+        if closed then
+          if let some n := st.closedCache[s]? then return n
+          let n ← term env t
+          modify fun st => { st with closedCache := st.closedCache.insert s n }
+          return n
         let n ← term env t
         modify fun st => { st with namedCache := st.namedCache.insert (s, env.id) n }
         return n
@@ -178,8 +224,18 @@ partial def term (env : Env) : Sexp → M Nat
     let n ← term env t
     let rec go : List Sexp → M Unit
       | .atom ":named" :: .atom name :: rest => do
+        let st ← get
+        -- the atoms of `t`, and of every named term it mentions (names are defined before use)
+        let atoms := Id.run do
+          let direct := atomsOf t {}
+          let mut acc := direct
+          for a in direct do
+            if let some more := st.namedAtoms[a]? then
+              for b in more do acc := acc.insert b
+          return acc
         modify fun st => { st with named := st.named.insert name t,
-                                   namedCache := st.namedCache.insert (name, env.id) n }
+                                   namedCache := st.namedCache.insert (name, env.id) n,
+                                   namedAtoms := st.namedAtoms.insert name atoms }
         go rest
       | _ :: rest => go rest
       | [] => return ()

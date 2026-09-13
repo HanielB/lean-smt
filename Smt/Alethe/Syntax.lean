@@ -112,10 +112,11 @@ copying: the environment maps names to node ids. -/
 /-- A node of the arena. -/
 inductive Node where
   /-- An atom. `bound` marks a variable bound by an enclosing `forall`/`exists`/`choice`/`lambda`
-      (such atoms make a term *open*, and open terms are never named on the cvc5 side). -/
+      (a term where such an atom occurs *free* is open, and open terms are never named on the
+      cvc5 side). -/
   | atom (s : String) (bound : Bool)
-  /-- An S-expression list `(n₀ n₁ … nₖ)`. `isOpen` records whether a bound atom occurs below;
-      `size` is the tree size (for diagnostics). -/
+  /-- An S-expression list `(n₀ n₁ … nₖ)`. `isOpen` records whether a bound atom occurs free
+      below (`Arena.free` has which); `size` is the tree size (for diagnostics). -/
   | list (children : Array Nat) (isOpen : Bool) (size : Nat)
 deriving Inhabited, BEq
 
@@ -125,6 +126,10 @@ structure Arena where
   lists : Std.HashMap (Array Nat) Nat := {}
   /-- Number of parents of each node (how many list nodes have it as a child). -/
   refs : Array Nat := #[]
+  /-- The bound atoms occurring free in each node: a binder form closes its own variables, so a
+      quantified formula with no variable of an enclosing binder is closed, and can be shared by
+      name on the cvc5 side like any other closed term. -/
+  free : Array (Array Nat) := #[]
 deriving Inhabited
 
 namespace Arena
@@ -147,18 +152,34 @@ def mkAtom (a : Arena) (s : String) (bound : Bool := false) : Arena × Nat :=
   | none =>
     let i := a.nodes.size
     ({ a with nodes := a.nodes.push (.atom s bound), atoms := a.atoms.insert (s, bound) i,
-              refs := a.refs.push 0 }, i)
+              refs := a.refs.push 0, free := a.free.push (if bound then #[i] else #[]) }, i)
+
+/-- The variables `(q ((x S) …) body)` binds, if the list is such a binder form. -/
+def binderVars (a : Arena) (cs : Array Nat) : Option (Array Nat) := do
+  guard (cs.size == 3)
+  let .atom q false := a.get cs[0]! | none
+  guard (q == "forall" || q == "exists" || q == "choice" || q == "lambda")
+  let .list vs _ _ := a.get cs[1]! | none
+  vs.mapM fun v => do
+    let .list xs _ _ := a.get v | none
+    guard (xs.size == 2)
+    let .atom _ true := a.get xs[0]! | none
+    return xs[0]!
 
 def mkList (a : Arena) (cs : Array Nat) : Arena × Nat :=
   match a.lists[cs]? with
   | some i => (a, i)
   | none =>
     let i := a.nodes.size
-    let isOpen := cs.any a.isOpen
+    let free := cs.foldl (fun (acc : Array Nat) c => acc ++ a.free[c]!.filter (!acc.contains ·)) #[]
+    let free := match a.binderVars cs with
+      | some vs => free.filter (!vs.contains ·)
+      | none => free
+    let isOpen := !free.isEmpty
     let size := cs.foldl (fun n c => n + a.size c) 1
     let refs := cs.foldl (fun rs c => rs.modify c (· + 1)) a.refs
     ({ a with nodes := a.nodes.push (.list cs isOpen size), lists := a.lists.insert cs i,
-              refs := refs.push 0 }, i)
+              refs := refs.push 0, free := a.free.push free }, i)
 
 /-- Serialize a node as a tree (exponential on heavily shared DAGs; use only for small terms and
     diagnostics). -/
