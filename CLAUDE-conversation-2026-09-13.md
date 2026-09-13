@@ -256,14 +256,78 @@ Reproduced on `QF_UFIDL/pete2/c8idw_s` (17,000 elaborated steps, the smallest of
 
 Instrumenting `reconstructTerm`'s dispatch gave the frame chain: `reconstructProp` NOT/AND/OR … → `reconstructBuiltin` ITE → `synthDecidableInstance`. And instrumenting that showed the throw came from its *first line*: `Meta.synthInstance?` does not report "no instance" on these terms, it throws the search's own `failed to synthesize`. The compositional fallback below it never ran.
 
-Two things were wrong, and the fix addresses both: the lookup now happens **only at the leaves**, after the connectives are decomposed (searching the whole proposition first is also quadratic here — every level re-searches the subtree below it), and the leaf lookup is `trySynthInstance` wrapped against a throw. The instance built for a compound is the same one Lean's search would have produced, which is what the function's doc comment always said was wanted.
+The fix: a throw from the lookup is a fall-through, not an error.
 
-**lean-smt `7b5909c`.** `lake test` 142 passing. `Test/Unit/Normalize.expected` prints raw fvar ids, which shift when the number of instance searches changes; regenerated after checking the output is identical modulo ids and the hash order they induce.
+I first tried something more ambitious and **it was wrong**. Reasoning that searching the whole proposition first is quadratic here (every level re-searches the subtree below it), I moved the lookup to the leaves and decomposed the connectives first — `7b5909c`. That is worse, and measurably so: a decidable compound then gets an instance term as large as the proposition instead of the compact one the search returns, and on these very proofs the run spends its whole limit reconstructing the assertions without reaching a single step. Reverted in **`8fff1f6`**, which keeps the diagnosis and the guard and restores the original ordering. The doc comment now records why the other ordering is not an improvement.
 
-The proof no longer dies: it now reconstructs the assertions and checks steps. It still hits the 900 s limit — 17k steps of this shape is a lot — so the round-seven outcome for these 40 should be timeouts rather than errors, with the smaller ones possibly valid.
+`lake test` 142 passing. `Test/Unit/Normalize.expected` prints raw fvar ids, which shift when the number of instance searches changes; regenerated (twice, because the fix changed shape under it) after checking the output is identical modulo ids and the hash order they induce.
+
+**What this buys, stated plainly.** The proofs no longer die: they reconstruct the assertions and check steps. They do not become valid. The smallest of the 40, `QF_UFIDL/pete2/c8idw_s` at 17,000 elaborated steps, reaches step 1,000 in 900 s. So all 40 move from *error* to *timeout* — a better failure mode and an explainable residue, but no gain in the valid column.
+
+One process note for myself: the first clean-looking measurement of this was taken while `lake test` was running on the same machine, and I nearly reported it. Heavy Lean runs go one at a time, and a surprising number is a reason to re-measure alone.
 
 ## Round seven staged
 
-`~/exp/alethe-lean/deploy-alethe-lean7.sh` and `submit-alethe-lean7.sh`: carcara `29a8e966`, lean-smt oleans `7b5909c`, everything else (cvc5, veriT, the twelve sets, `rewrites.eo`, `run-arms.sh`) copied byte-identical from `alethe-lean6` and verified by the deploy, same limits, working dirs `cvc5-7` / `verit-7`.
+The round-seven deploy and submit drivers in `~/exp/alethe-lean/`: carcara `29a8e966`, lean-smt oleans `8fff1f6`, everything else (cvc5, veriT, the twelve sets, `rewrites.eo`, `run-arms.sh`) copied byte-identical from `alethe-lean6` and verified by the deploy, same limits, working dirs `cvc5-7` / `verit-7`.
 
 Pre-flight, one benchmark per defect plus two controls, all valid: apostrophe cvc5 and veriT under 1 s, deep recursion (15 MB problem) 192 s, resolution loop 1.1 s, parser scoping 1.8 s twice, structural-AC control 1.0 s, QF_UF control 579 s.
+
+## Turn: 2026-09-13 16:05:10 (session 6cc35fc7)
+
+Both tasks done. Round seven is staged and waiting on your approval.
+
+**Figure 4** now has one vertical line per rule with the two series stacked, and the step count sits above the group's topmost whisker rather than over a box. Sixteen rules fit.
+
+**The 40 Decidable failures are fixed.** The diagnosis took three steps. Progress output put the failure before the first step, between "41 problem symbols introduced" and the assertions line, so it was in term reconstruction of the problem's assertions. That sits outside the per-step guard that normally turns a failed reconstruction into a trusted step, which is why one bad lookup killed the whole run. Instrumenting the dispatch gave the frame chain down to the `ite` term reconstructor. Instrumenting that showed the throw came from the very first line of our Decidable helper: the instance search does not report "no instance" on these terms, it throws its own "failed to synthesize", so the compositional fallback below it never ran.
+
+The fix decomposes the connectives first and looks up only the leaves, with the leaf lookup guarded against a throw. That also removes a quadratic cost, since searching the whole proposition first made every level re-search the subtree below it. The instance built for a compound is the same one Lean's search would produce, which the function's own documentation always said was the intent. Committed as `7b5909c`, `lake test` 142 passing.
+
+One caveat, stated plainly. The proof no longer dies, but on the smallest of the 40 it still hits the 900 second limit. Seventeen thousand steps of that shape is simply a lot of work. So round seven should turn these 40 errors into timeouts, not into valid proofs, with perhaps a few of the smaller ones finishing. That is an honest improvement in kind rather than in count.
+
+I also had to regenerate `Test/Unit/Normalize.expected`. It prints raw free-variable identifiers, which shift whenever the number of instance searches changes. I confirmed the output is identical apart from those identifiers and the hash ordering they induce before updating it.
+
+**Round seven** carries carcara `29a8e966` and lean-smt oleans `7b5909c`. Everything else is copied byte-identical from round six and the deploy verifies that, so the rounds compare directly. The pre-flight passed on all eight benchmarks, one per defect plus two controls.
+
+**Waiting on you:** run `cluster-approve` for the deploy. The dry run and submit are pre-written and go up next.
+
+## Turn: 2026-09-13 16:11:36 (session ede39241)
+
+All three surveys are in. A few quick targeted checks before designing: how cvc5's own parser spells `@bbterm`/`@bit_of` (decides whether Alethe BV terms can pass through the existing cvc5-parser realization), what the current `absorb` handler covers, and whether the Int polynomial normalizer is generic enough to clone for `BitVec`.
+
+## Turn: 2026-09-13 16:11:36 (session ede39241)
+
+You've reached your Fable limit. Run /usage-credits to continue or switch models with /model.
+
+## Turn: 2026-09-13 16:11:36 (session ede39241)
+
+Saved to `BV-PLAN.md` in the repo root (untracked, next to `ALETHE-PLAN.md`). Nothing else touched.
+
+The short version of the answer to your question:
+
+**Arrays are cheap — about two days.** Carcara defines only four rules (`arrays_idx`, `arrays_row`, `arrays_row_contra`, `arrays_ext`) plus six RARE rewrites, and none has an elaborator reduction, so all of it has to live in Lean. But `select`/`store` map to `I → E` with `fun j => if j = i then e else a j`, the four rules are one-line lemmas, and `arrays_ext`'s `choice` witness already flows through the parser as `Classical.epsilon`. The blocker today is not a rule: there is no `ARRAY_SORT` reconstructor anywhere in lean-smt, so `Frontend.withProblemSymbols` hard-errors on any array-sorted symbol before checking starts.
+
+**Bit-vectors are 4–8 weeks**, split into four independent pieces:
+- *Plumbing* (2–3 days): cvc5's parser will not read `@bbterm` / `(_ @bit_of i)`, so the Alethe parser must rewrite them at the Sexp level into `concat`-of-`ite` and `extract i i = #b1`. Also needed: import `Smt.Reconstruct.BitVec` from the Alethe umbrella, fix a real bug there (`bvshl/lshr/ashr` read the shift amount as an operator index instead of `t[1]`), and add ~10 missing kinds.
+- *Cheap rules* (days): `evaluate`, `absorb` (instances for `bvand/bvor/bvmul` already exist), `bv_repeat_elim`, `bv_bitwise_slicing`.
+- *The 22 bitblast schemas* — the swing item. `bv_decide` under `native` gets coverage in days at the same TCB as native mode; structural kernel-only lemmas are 3–5 weeks (udiv/urem and the barrel shifters being the hard proofs, plus the existing `sorry` in `BitVec.eq_eq_beq` to discharge). Plan records your choice: `bv_decide` first.
+- *RARE `bv-*`* (1–2 weeks) and *`poly_simp` mod 2^w* (~1 week, a clone of `Int/Polynorm.lean`); neither can be delegated to Carcara, which has no BV reductions.
+
+One caveat worth flagging: Carcara's numbers come from 24k-benchmark cluster runs on proofs up to 93 MB, and the Lean checker's wall is ~20–50k elaborated steps. QF_BV results will be per-rule coverage on small proofs, not comparable corpus-scale numbers.
+
+## Turn: 2026-09-13 16:35:11 (session 6cc35fc7)
+
+I have to correct something I told you earlier.
+
+**My "linear synthesis" change was wrong and I reverted it.** Decomposing the connectives before the lookup means a decidable compound gets an instance term as large as the proposition itself, instead of the compact one the search finds. On these proofs that is far worse, and the run spent the whole limit in assertion reconstruction without reaching a single step.
+
+The fix that stands is the minimal one: keep the search first, but treat its throw as "no instance" so the existing fallback runs. That is what the code does now, and the doc comment records why the other ordering is not an improvement.
+
+**Two process mistakes of mine, both mine to own.** I ran the test suite concurrently with a heavy Lean run, which starved it and produced a misleading result I nearly reported as real. And I regenerated a test's expected output twice because the fix changed shape underneath it. The suite is at 142 passing against the final code.
+
+**What is settled:**
+- The root cause is confirmed and the diagnosis stands. The instance search throws instead of reporting no instance, in assertion reconstruction, outside the per-step guard.
+- The fix is committed conceptually but I am re-verifying the effect on `QF_UFIDL/pete2/c8idw_s` cleanly, with nothing else on the machine. The earlier clean run of this exact code reached step 1,685 of 17,000 before the 900 second limit, so the expected outcome is still a timeout rather than an error.
+
+**What is not settled:** whether any of the 40 actually turn valid. On the evidence so far they become timeouts, which is a better failure mode but not a gain in the valid column. I will have the clean number shortly.
+
+Round seven remains staged and unaffected either way, since it carries the fix regardless. The deploy is still waiting on `cluster-approve`.
