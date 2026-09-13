@@ -100,8 +100,12 @@ def resolveChain (s : Step) : ReconstructM (Array cvc5.Term × Expr) := do
     -- clauses are sets: drop the duplicates the resolution introduced (keeps the working clause
     -- small; the kernel cost of the index map is linear)
     (cc, cp) ← dedup cc cp
-    -- Alethe removes every occurrence of the pivot: resolve again while it remains.
-    while hasPivot cc c₂ l pol do
+    -- Alethe removes every occurrence of the pivot: resolve again while it remains -- unless the
+    -- premise itself holds the pivot with the polarity of the working clause (a tautological
+    -- `(cl l (not l))`, as cvc5 emits for `not_equiv2`-style splits): that occurrence is put back
+    -- by every resolution, so it stays, and resolving again would never end.
+    let putsBack := if pol then c₂.contains l else c₂.any (isNotOf · l)
+    while !putsBack && hasPivot cc c₂ l pol do
       cp ← Prop.reconstructResolution cc c₂ pol l cp hp
       cc := Prop.getResolutionResult cc c₂ pol l
       (cc, cp) ← dedup cc cp
