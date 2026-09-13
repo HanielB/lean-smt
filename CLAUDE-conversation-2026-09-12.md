@@ -865,3 +865,59 @@ Submitted at 18:2x inside tmux `alean6`: 24 arrays (12 per solver), aggregators 
 Two lessons for the approval workflow, now in memory: the token is bound to the *whole* Bash command string, so a locally appended `| tee | grep` makes an approved command unrecognisable; and never put `head` after the driver in a `tee` pipeline.
 
 Next: `cluster-sync alethe-lean/cvc5-6` and `verit-6` when they finish, pair against round four, then the report update and the rule box plots (`rule-boxplots-round5.py`, to be pointed at the round-six data).
+
+## Turn: 2026-09-12 18:16:22 (session bddaeda3)
+
+Round six is submitted and running. Summary of the whole job:
+
+**Submitted** at about 18:25 inside tmux session `alean6`. Both aggregators started and 24 arrays are queued, 12 per solver. The first cvc5 tasks are already running on the octa nodes.
+
+| item | value |
+|---|---|
+| cvc5 arrays | 27756865 to 27756872, 27757073 to 27757076 |
+| veriT arrays | 27757077 to 27757088 |
+| working dirs | `exp/results/alethe-lean/cvc5-6`, `verit-6` |
+| limits | octa, 8 per node, wall 3000 s, 12000 MB, 1 cpu |
+
+**What changed since the cancelled round five**
+- Carcara `92c641c0`: the structural rule for a renamed `and_simplify`/`or_simplify` is chosen by asking each checker, so cvc5's backwards idempotence becomes `semilattice_simp` instead of a hole. Confirmed on the benchmark that exposed it.
+- The runner's carcara-on-elaborated arm now passes `--expand-let-bindings`. Confirmed on the benchmark that exposed it.
+- lean-smt oleans at `21b569a`, which is HEAD plus the pin bump. Everything else is byte-identical to round five.
+
+**Local pre-flight**: the first all-`none` run was my loop feeding the benchmark list into the runner's stdin. Fixed. The two round-five failures now pass every arm. One larger QF_UF benchmark hit my local 600 s Lean cap after passing at 594 s in a direct run. The cluster allows 900 s, so this is boundary noise. The rest of the smoke run is still going in the background.
+
+**Two mistakes of mine cost you extra approvals**: I appended a local pipe to the approved dry-run command, which the guard correctly rejected, and my first dry run put `head` after the driver, which cut off the veriT half. Both are recorded in memory so they do not recur.
+
+**Committed** to lean-smt on `alethe-dev`: `21b569a` (pin bump) and `b74a550` (log).
+
+**Next**, once the jobs finish: `cluster-sync alethe-lean/cvc5-6` and `verit-6`, pair against round four, update the report, and generate the rule box plots.
+
+## Turn: 2026-09-12 18:17:05 (session bddaeda3)
+
+Done. I had one shell open and it is now stopped, with nothing left behind.
+
+**What was mine**
+- The local smoke run over the remaining four benchmarks plus veriT. It was on a large QF_UF benchmark with three more to go, each up to 25 minutes of Lean time. Its purpose was already served: both round-five failures pass every arm, and the cluster run is the real test. Stopped, and no runner, cvc5, carcara or Lean process from it remains.
+
+**What is not mine**
+- Five interactive bash shells on pts/1, 2, 5, 13 and 15, parented by your terminal emulators.
+- The Lean server and four Lean workers on lean-smt files, which belong to an editor session.
+
+The cluster jobs are unaffected and keep running under tmux `alean6` on the head node.
+
+## Round six, first check (cvc5 at 17,559 / 23,328; veriT still queued)
+
+Paired on the same 17,559 benchmarks:
+
+| | round four | round five | round six |
+|---|---|---|---|
+| carcara valid | 14,003 | 13,999 | 14,001 |
+| lean valid | 13,633 | 13,590 | 13,625 |
+| lean timeout | 324 | 332 | 334 |
+| lean error | 42 | 42 | 42 |
+| **holey** | 2 | **35** | **0** |
+| `stats carcara-elab` present | – | 6,986 of 15,279 | **14,001 of 14,001** |
+
+Both fixes hold at scale: no legacy AC rule survives into any elaborated proof, all 35 round-five holes are valid again, and the checkelab arm covers every elaborated proof.
+
+The residue against round four is boundary noise: the 12 `valid → timeout` all took 529–900 s in round four (limit 900); the 4 "lost in elaboration" are cvc5 solver timeouts, no proof to elaborate; the 42 lean errors are the same 42 benchmarks as round four (35 `failed to parse`, 5 deep recursion, 2 memory) — still to be investigated.
