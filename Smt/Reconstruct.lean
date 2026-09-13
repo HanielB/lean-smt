@@ -18,13 +18,20 @@ public meta import Smt.Attribute
 public meta section
 
 open Qq in
-/-- A `Decidable` instance for `e`: the synthesized one if there is one, otherwise a classical one
-    built compositionally through `¬`, `∧`, `∨` and `↔`, so that the instance of a compound
-    condition is the one a theorem statement over `[Decidable c]` elaborates to (`instDecidableNot`
-    over the instance of `c`, etc.) rather than an opaque `Classical.propDecidable` of the whole. -/
+/-- A `Decidable` instance for `e`, built compositionally through `¬`, `∧`, `∨` and `↔` so that
+    the instance of a compound condition is the one a theorem statement over `[Decidable c]`
+    elaborates to (`instDecidableNot` over the instance of `c`, etc.) rather than an opaque
+    `Classical.propDecidable` of the whole. Only the leaves are looked up, and a leaf with no
+    instance -- an uninterpreted Boolean symbol, an `ite` between propositions -- gets the
+    classical one.
+
+    The connectives are decomposed *before* the lookup on purpose. Searching for an instance of
+    the whole proposition first is quadratic on the nested `ite`/comparison cascades of QF_IDL and
+    QF_UFIDL, since every level re-searches the subtree below it; and on those the search does not
+    merely fail, it throws its own "failed to synthesize", which escaped this function and took
+    the run down before a single step was checked (40 veriT proofs in the SMT-LIB round). The
+    lookup at a leaf is guarded for the same reason. -/
 partial def Lean.Meta.synthDecidableInstance (e : Q(Prop)) : MetaM Expr := do
-  let oh : Option Q(Decidable $e) ← Meta.synthInstance? q(Decidable $e)
-  if let some h := oh then return h
   match e with
   | ~q(¬$p) =>
     let hp : Q(Decidable $p) ← synthDecidableInstance p
@@ -41,7 +48,16 @@ partial def Lean.Meta.synthDecidableInstance (e : Q(Prop)) : MetaM Expr := do
     let hp : Q(Decidable $p) ← synthDecidableInstance p
     let hr : Q(Decidable $r) ← synthDecidableInstance r
     return q(@instDecidableIff $p $r $hp $hr)
-  | _ => return q(Classical.propDecidable $e)
+  | _ =>
+    let oh : Option Q(Decidable $e) ← try
+        match ← Meta.trySynthInstance q(Decidable $e) with
+        | .some h => pure (some h)
+        | _ => pure none
+      catch ex =>
+        if ex.isMaxRecDepth then throw ex else pure none
+    match oh with
+    | some h => return h
+    | none => return q(Classical.propDecidable $e)
 
 namespace Smt
 
