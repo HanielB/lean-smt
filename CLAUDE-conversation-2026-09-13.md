@@ -781,3 +781,66 @@ answer, not reshaping the command.
 **When it lands** I will pair three ways: against round six, to confirm the
 residue is still cleared, and against the first smoke pass, to confirm the 75
 regressions are gone and that nothing new replaced them. Then the full round.
+
+## Turn: 2026-09-13 23:00:27 (session 6cc35fc7)
+
+Submitted and running.
+
+| | |
+|---|---|
+| tmux | `alean7bs` |
+| arrays | 24, twelve per solver |
+| aggregators | 1613407, 1613439 — both up |
+| tasks | 2,339 cvc5 (200 already running), 2,340 veriT |
+| working dirs | `cvc5-7bsmoke`, `verit-7bsmoke` |
+
+The fix was committed as `ee8502b` before the redeploy, and the log entry is committed as `ac6f966`.
+
+The one thing that makes this comparison worth anything: only the oleans moved. `run-arms.sh` (`932f2d82…`), `rewrites.eo` (`9233775f…`), `bin/cvc5` and `bin/veriT` are all still byte-identical to round six, so this pass differs from the first smoke by exactly one commit.
+
+I have a waiter on the queue and will report when it empties — the first pass took about two and a half hours. Then I'll pair three ways: against round six to confirm the residue is still cleared, and against the first pass to confirm the 75 regressions are gone with nothing new in their place. If both hold, the full round is next and will need its own dry-run and submit approvals.
+
+## Turn: 2026-09-14 01:40 (session 6cc35fc7)
+
+The second smoke pass is clean. The fix does exactly what it should and nothing else.
+
+**Against the first pass** (one commit apart, `ee8502b`, same sample):
+
+| | cvc5 | veriT |
+|---|---|---|
+| `timeout → valid` | 38 | 38 |
+| `valid →` anything else | **0** | **0** |
+| `valid → holey` | 0 | 0 |
+| wall new/old, proofs over 10 s | median 0.969 | median 0.914 |
+
+All 37 cvc5 and 38 veriT losses came back, plus one more on the cvc5 side, and
+they come back *faster* than round six: `LD_ST_neg.2step` 28.7 s → 24.4 s,
+`FISCHER10-1` 34.8 s → 31.7 s, since the `and` optimization applies to them too.
+
+**Against round six** — 0 cvc5 proofs lost, 13 gained (6 `timeout → valid`, 6
+`error → valid`, 1 `none → valid`); veriT 24 gained (11 + 8 + 5 `holey → valid`)
+against a single loss, `convert-jpg2gif-query-1237` at 880.5 s in round six
+against a 900 s limit — twenty seconds from the edge, so boundary noise.
+`valid → holey` is 0 in every pairing.
+
+**Per rule, against round six**, all the gains hold and nothing regressed:
+
+| rule | cvc5 | veriT |
+|---|---|---|
+| `and` | 3.740 → 0.818 ms/step (0.22×) | 19.025 → 1.704 (**0.09×**) |
+| `subproof` | 7.491 → 4.882 | — |
+| `resolution` | 5.302 → 5.032 | 5.034 → 5.008 |
+
+**Four veriT benchmarks moved between non-valid states**, and I checked all four
+rather than wave them through. Three are veriT hitting its own 150 s solver kill
+in one pass but not the other (136.8 s, 143.4 s, 132.9 s against the limit) —
+solver timing, not the checker. The fourth is real and worth recording:
+`QF_LIA/…/cggmp2005-O0.smt2` was a 900 s timeout and is now an *error* at 301 s,
+Lean's `-M 10000` heap cap with RSS at 10,241,864 kB. Before the fix it spent its
+whole budget in the quadratic parse and never allocated that far; now it gets
+further and runs out of heap on a 29,667-step proof. Never valid either way, and
+no soundness question, but it is a genuine memory-bound case for the report.
+
+**Staged**: upload the full round-seven driver (header updated; the submit call
+itself unchanged) and dry-run it. Twelve `unsat_*` sets, 25,200 benchmarks per
+solver, into `cvc5-7` and `verit-7`.
