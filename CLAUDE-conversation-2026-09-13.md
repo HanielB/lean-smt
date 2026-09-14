@@ -411,3 +411,267 @@ Round seven therefore carries six changes over round six, and one of them — yo
 **Same everything else.** Toolchain, runner, limits (octa, `-j 8`, wall 3,000 s, 12,000 MB, 1 cpu) and the twelve logics are the full round's. Results go to `cvc5-7smoke` / `verit-7smoke`, so nothing collides with the full run.
 
 Drivers: `deploy-alethe-lean7.sh` (now also derives the sample sets and uploads both submit drivers), the smoke driver, and the full driver, all in `~/exp/alethe-lean/`.
+
+## Turn: 2026-09-13 17:18:30 (session 6cc35fc7)
+
+The other session's work is already on the branch, on top of my fix. Reviewing it before testing.
+
+## Turn: 2026-09-13 17:18:30 (session 6cc35fc7)
+
+The fix was already committed as `8fff1f6`; your `and` optimization sits on top of it, and everything is now staged for the cluster.
+
+**Repo state.** I rebuilt the report over your revised section 2.2 together with the stacked Figure 4, which lands the two PDFs both sessions had deliberately left uncommitted. The build is clean at 23 pages and the oleans are current, including the new projection module.
+
+**The smoke test.** The deploy derives twelve sample sets by taking every tenth benchmark of each unsat logic, about 2,330 per solver. That is deterministic, reproducible from the sets already on the cluster, and stratified by logic for free, so each logic's rate compares directly with round six on the same benchmarks. Toolchain, runner and limits are exactly the full round's. Results go to separate working directories so nothing collides with the full run afterwards.
+
+**Why smoke first is right here.** Five of the six changes fix crashes, and I have verified each on the benchmark that exposed it. Yours is different in kind: it changes how thirteen call sites build proof terms, and it is the one change expected to move the timeout column rather than the error column. A tenth of the corpus will show whether the `and` and `distinct_elim` gains hold at scale, and will catch any unsoundness as a drop in valid counts, before the full round is spent.
+
+**Waiting on you:** run `cluster-approve` for the deploy. Then the smoke dry run, the smoke submit, and once its results look right, the full round. Each goes up one at a time.
+
+## Turn: 2026-09-13 17:23:53 (session 6cc35fc7)
+
+Deploy is done and verified. The smoke dry run is staged.
+
+**Deploy result** (log at the job's tmp directory):
+
+| check | value |
+|---|---|
+| carcara | `29a8e966 bv-fixes` |
+| veriT, runner, rewrites | byte-identical to round six, three OKs |
+| sets | 14 full and 14 sample derived |
+| benchmarks | 25,200 full, 2,528 sample |
+| let-bindings flag | 3, as expected |
+
+The head-node smoke test passed on both solvers for QF_UF and QF_LIA, every arm valid with no trusted steps.
+
+One note on the counts. The deploy derived sample sets for all 14 sets present on disk, but the submit drivers use only the twelve logics in scope, so the smoke run will cover about 2,330 benchmarks per solver rather than 2,528. The extra two sets are simply unused, as they are in the full round.
+
+**Waiting on you:** run `cluster-approve` for the smoke dry run. It submits nothing and writes its full output to a log on scratch.
+
+## Turn: 2026-09-13 17:27:05 (session 6cc35fc7)
+
+Dry run passed for both solvers, and the smoke submission is staged.
+
+**Dry run**: exit 0, both halves present, each with octa, wall 3,000 s, 12,000 MB, 1 cpu, 8 jobs per node, and all twelve sample sets, into `cvc5-7smoke` and `verit-7smoke`. No errors.
+
+**Waiting on you:** run `cluster-approve` for the smoke submission. It starts both jobs inside a detached tmux named `alean7s`, waits 45 seconds, then reports the array count and the queue.
+
+Once the sample lands I will compare it against round six on the same benchmarks, checking three things: that no valid proof became invalid or holey, that the `and` and `distinct_elim` per-rule times moved the way your controlled measurement predicted, and whether the timeout column improved. Then the full round.
+
+## Turn: 2026-09-13 17:29:26 (session 6cc35fc7)
+
+The smoke run is submitted and I am waiting on it.
+
+**Submitted**: 24 arrays, 12 per solver, both aggregators started. About 2,340 benchmarks per solver, with 200 cvc5 tasks already running.
+
+While it runs I wrote the two analyses it will need, both in `~/exp/alethe-lean/`:
+
+- **`smoke-verdicts.py`** pairs the sample against round six per benchmark and reports the verdict matrix, every proof that stopped validating with the times that explain it, every proof newly validated, and the wall-clock ratio on proofs both validate. It calls out `valid` to `holey` separately, since a trusted step appearing where there was none is the one outcome that would mean the optimization is unsound rather than merely slower or faster.
+- **`rule-compare.py`** pairs per-rule mean step times, so I can check the `and` and `distinct_elim` gains at scale against your controlled measurement of 1.229 to 0.488 milliseconds per step. Pairing per benchmark means a change in which proofs finish cannot distort the comparison.
+
+I will report when the queue empties. Expect roughly a tenth of round six's wall time, so on the order of an hour or two.
+
+## Turn: 2026-09-13 17:52:30 (session 6cc35fc7)
+
+I am blocked on authentication, not on the run.
+
+**The Kerberos ticket has lapsed**, so I cannot reach the cluster to check the smoke run or pull its results. Please run this in a real terminal, since it needs a password prompt:
+
+```
+stanford-auth
+```
+
+Tell me when it is done and I will check the queue immediately.
+
+**State while you were away.** The smoke run was submitted successfully before the session ended: 24 arrays, 12 per solver, both aggregators started, about 2,340 benchmarks each, into `cvc5-7smoke` and `verit-7smoke`. My background waiter for the queue was killed when the session exited, but that only stopped my polling. The cluster jobs are unaffected and have most likely finished by now.
+
+Both analyses are written and syntax-checked, ready to run the moment I can reach the results:
+
+- **`smoke-verdicts.py`** pairs the sample against round six per benchmark: the verdict matrix, every proof that stopped validating with the times that explain it, every proof newly validated, and the wall-clock ratio on proofs both validate. It reports `valid` to `holey` separately, since that is the one outcome that would indicate the `and` optimization is unsound rather than just faster or slower.
+- **`rule-compare.py`** pairs per-rule mean step times so I can check the `and` and `distinct_elim` gains at scale against your controlled figures.
+
+## Turn: 2026-09-13 20:45 (session 6cc35fc7)
+
+The smoke run finished, and it did its job: it caught a regression that would have
+cost the full round.
+
+**The `and` optimization is exactly what your controlled measurement promised.** Per
+rule, paired per benchmark against round six:
+
+| rule | cvc5 old → new ms/step | veriT old → new ms/step |
+|---|---|---|
+| `and` | 3.444 → 0.805 (0.23×) | 18.772 → 1.687 (**0.09×**) |
+| `and_pos` | 2.308 → 1.151 | 1.824 → 1.071 |
+| `or_neg` | 1.947 → 0.934 | — |
+| `subproof` | 7.429 → 4.902 | 12.394 → 6.497 |
+
+No rule's median regressed; `resolution`, `poly_simp`, `la_generic`, `rare_rewrite`
+and `distinct_elim` are all within noise of round six, as they should be.
+
+**And no unsoundness.** `valid → holey` is 0 on both solvers, which was the check
+that mattered most.
+
+**But 37 cvc5 and 38 veriT proofs went valid → timeout**, and they are not boundary
+cases: 34.8 s → 900 s, 28.7 s → 900 s. Three facts localize it:
+
+- All 75 die with `steps=0`, before the first step — inside the loop that
+  reconstructs the problem's assertions, not in step checking.
+- The same benchmarks regress under both solvers (`FISCHER*`, `plan-19`,
+  `LD_ST_neg.2step`), so it is a lean-smt change, not a solver-side one.
+- They are the large proofs: 48 MB raw median against 0.2 MB for those still
+  valid. Round six's own breakdown rules out parsing — `LD_ST_neg.2step` spent
+  parse 3.6 s, realize 0.9 s, **reconstruct 157.9 s**.
+
+**I got the cause wrong twice before bisecting.** Recording both, since the wrong
+turns are the useful part.
+
+First guess: the closed-term check in `6734243`, which asks whether a term's
+expression mentions a variable beyond the base context via `e.find?`. That runs
+per reconstructed term and `find?` starts its memo empty on every call, so it did
+look quadratic. I built the fix (skip the scan when the context is still the base
+one) and it changed nothing — the proof still timed out at 600 s, same RSS to
+within 300 KB. That patch is *not* in the tree. Second guess, made and discarded
+in the same breath: the arena's `free` sets in `e9c32bf`, which I ruled out
+because these proofs have no binders at all.
+
+**Bisecting the six commits found it: `e9c32bf`, the half I had not ruled out.**
+`4a37a9b` (five commits in) checks the proof in 6.90 s; `e9c32bf` times out. The
+arena half really is inert here — `forall`, `exists`, `choice` and `lambda` are
+all zero in this proof. The `:named` half is not. cvc5 emits its `and` assertions
+as a left-nested chain of named terms:
+
+```
+(assume a0 (! (and (! (and (! (and (! (and ...
+```
+
+**1,820 deep on one line.** `e9c32bf` computes each named term's atom set eagerly
+with `atomsOf t {}`, which walks the whole subterm — so every one of the 1,820
+levels re-walks everything below it. Quadratic in the chain, in *parsing*, which
+is why the deaths are before the first step and why they land exactly on the
+QF_IDL/QF_LIA proofs with huge `and` assertions.
+
+**Fix**, both halves in `Smt/Alethe/Parser.lean`:
+
+- `atomsOf` no longer descends into a nested `(! t :named @p)`. `@p` is itself an
+  atom of the enclosing term and `@p`'s own set is unioned in anyway, so walking
+  `t` again was pure duplication. (`@p`'s atoms are not filtered by the enclosing
+  binder list, so a variable bound between the two is reported free when it is
+  not — that costs sharing, never soundness.)
+- The sets are computed **lazily**, only when a `closed` test actually asks. The
+  test short-circuits on `env.vars.isEmpty`, so a proof with no binder never asks
+  and never pays a thing.
+
+**Measured**, `QF_IDL/sep/hardware/LD_ST_neg.2step.smt2`, locally:
+
+| | round-six source | HEAD | with the fix |
+|---|---|---|---|
+| cvc5 proof | 6.87 s valid | >300 s timeout | **6.30 s valid** |
+| veriT proof | — | >600 s timeout | **40.9 s valid** |
+
+And the guard that matters — the two `UF/sledgehammer/Hoare` proofs `e9c32bf` was
+written for, both 900 s timeouts in round six: `uf.823377` **2.29 s valid**,
+`uf.828950` **2.21 s valid**. That is the "checks valid in 2 s" the commit
+claimed, preserved exactly. `lake test`: 142 passing, and `Normalize.expected`
+needed no regeneration.
+
+The round-six residue the sample did fix is real and stays: 6 cvc5 and 8 veriT
+`error → valid` (the apostrophe quoting and the `Decidable` guard), 5 + 10
+`timeout → valid`, 5 veriT `holey → valid`, and the whole `UFLIA/simplify2`
+family now validates in 140–430 s where it timed out before.
+
+Reproduced locally on `QF_IDL/sep/hardware/LD_ST_neg.2step.smt2` and
+`QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_96.smt2`, both fetched from the
+cluster; the locally elaborated proofs match the cluster's byte for byte
+(744,452 and 1,307,219 bytes).
+
+## Turn: 2026-09-13 20:43:32 (session 6cc35fc7)
+
+The smoke test did its job — it caught a regression that would have cost the full round.
+
+## The `and` optimization is exactly what your controlled measurement promised
+
+Per-rule mean step times, paired per benchmark against round six:
+
+| rule | cvc5 old → new | veriT old → new |
+|---|---|---|
+| `and` | 3.444 → 0.805 ms/step (0.23×) | 18.772 → **1.687** ms/step (0.09×) |
+| `and_pos` | 2.308 → 1.151 | 1.824 → 1.071 |
+| `or_neg` | 1.947 → 0.934 | — |
+| `subproof` | 7.429 → 4.902 | 12.394 → 6.497 |
+
+No rule's median regressed — `resolution`, `poly_simp`, `la_generic`, `rare_rewrite`, `distinct_elim` all sit within noise of round six. And **`valid → holey` is 0 on both solvers**, which was the check that mattered most.
+
+The round-six residue you paid for also cleared: 6 cvc5 and 8 veriT `error → valid`, 5 + 10 `timeout → valid`, 5 veriT `holey → valid`, and the whole `UFLIA/simplify2` family now validates in 140–430 s where it used to time out.
+
+## But 37 cvc5 and 38 veriT proofs went valid → timeout
+
+Not boundary cases — 34.8 s → 900 s, 28.7 s → 900 s. Three facts localize it:
+
+- All 75 die at `steps=0`, before the first step, inside the loop that reconstructs the problem's assertions.
+- The *same* benchmarks regress under both solvers (`FISCHER*`, `plan-19`, `LD_ST_neg.2step`), so it is a lean-smt change, not solver-side.
+- They are the large proofs: 48 MB raw median against 0.2 MB for those still valid. Round six's breakdown rules out parsing — `LD_ST_neg.2step` spent parse 3.6 s, realize 0.9 s, **reconstruct 157.9 s**.
+
+**The cause is the closed-term check in `6734243`, not the `and` work.** Deciding whether to cache a term as closed scans its expression:
+
+```lean
+!e.hasFVar || (e.find? fun s => s.isFVar && !base.contains s.fvarId!).isNone
+```
+
+`Expr.find?` memoizes on pointers *within one call* but starts empty on the next, and this runs on every reconstructed term — so a term of n nodes gets scanned O(n) times. The `hasFVar` short-circuit never fires either, because the problem's own symbols are free variables. Quadratic in term size, which is why only the big proofs died. My comment on that commit claiming the check was linear was wrong.
+
+**The fix**: every local context here extends the base one, so a context of the base's size *is* the base — no variable beyond it can exist yet, and the scan is skipped outright. Under a binder the exact scan still runs, which is where the nested skolem definitions that motivated the commit need its precision; the base case is where the assertions and most steps are reconstructed, so that is the one that has to be free.
+
+I reproduced both regressions locally (`LD_ST_neg.2step` and `pb_real_30_75_45_96`, fetched from the cluster; the locally elaborated proofs match the cluster's byte for byte at 744,452 and 1,307,219 bytes). The HEAD baseline run is in flight now — once it confirms the timeout I will build the patch and measure the same proof again before proposing the full round.
+
+## Turn: 2026-09-13 20:52:51 (session 6cc35fc7)
+
+**Confirmed locally**: at HEAD, `LD_ST_neg.2step` times out at 600 s on a proof round six checked in 166.8 s. The patch is building now; I'll measure the same proof against it and then run the unit tests before proposing the full round.
+
+## Turn: 2026-09-13 20:53:19 (session 6cc35fc7)
+
+Patch is built and the measurement is running. I'll report when it lands.
+
+## Turn: 2026-09-13 21:06:58 (session 6cc35fc7)
+
+I have a fast repro (28.7 s baseline expected vs >120 s now) and I'm bisecting the six round-seven commits. Baseline build + run is in flight.
+
+## Turn: 2026-09-13 21:07:21 (session 6cc35fc7)
+
+Rebuilding at `-j3` to stay clear of the memory ceiling, then measuring the round-six baseline.
+
+## Turn: 2026-09-13 21:07:32 (session 6cc35fc7)
+
+Baseline build and measurement running.
+
+## Turn: 2026-09-13 21:07:55 (session 6cc35fc7)
+
+Running (this lake has no jobs flag; the earlier kill was a one-off memory spike and the build resumes incrementally from 387/397).
+
+## Turn: 2026-09-13 21:08:21 (session 6cc35fc7)
+
+Baseline established at 6.87 s. Bisect midpoint (`e9c32bf`, first three commits) is building and measuring.
+
+## Turn: 2026-09-13 21:13:41 (session 6cc35fc7)
+
+Culprit is in the first three commits, and the flat RSS says it never reaches reconstruction. Testing the first two now.
+
+## Turn: 2026-09-13 21:17:19 (session 6cc35fc7)
+
+Bisect landed on `e9c32bf` (6.90 s at the commit before it, timeout at it). The fix is building — it does two things: `atomsOf` no longer descends into a nested `:named` subterm, and the atom sets are now computed lazily, so a proof with no binders never computes one at all.
+
+## Turn: 2026-09-13 21:19:02 (session 6cc35fc7)
+
+Both repros are fixed. The quantifier-heavy guard proofs are running now — these are the ones `e9c32bf` existed to rescue, so they're the test of whether my change preserves its win.
+
+## Turn: 2026-09-13 21:19:23 (session 6cc35fc7)
+
+Test suite running. Summary of where this landed:
+
+| | round-six source | HEAD (round seven) | with the fix |
+|---|---|---|---|
+| `LD_ST_neg.2step` (cvc5) | 6.87 s valid | **>300 s timeout** | 6.30 s valid |
+| `LD_ST_neg.2step` (veriT) | — | **>600 s timeout** | 40.9 s valid |
+| `uf.823377` (sledgehammer) | 900 s timeout | 2 s valid | 2.29 s valid |
+| `uf.828950` (sledgehammer) | 900 s timeout | 2 s valid | 2.21 s valid |
+
+I was wrong twice before getting here, and it is worth being explicit about it: my first diagnosis blamed the closed-term scan in `6734243`, and the patch I built for it changed nothing. That patch is not in the tree. Bisecting the six commits located the real cause in `e9c32bf` — the commit whose arena half I had explicitly ruled out because these proofs have no binders. The binder half was indeed inert; the `:named` half was not.

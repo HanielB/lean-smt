@@ -187,7 +187,38 @@ partial def atomsOf (s : Sexp) (acc : Std.HashSet String) (bound : List String :
       atomsOf body acc (names ++ bound)
     else
       [Sexp.atom q, .expr bs, body].foldl (fun acc x => atomsOf x acc bound) acc
+  | .expr (.atom "!" :: t :: attrs) =>
+    -- `(! t :named @p)`: `@p` is an atom of this term, and `atomsOfNamed` unions in `@p`'s own
+    -- atoms, so there is no need to walk `t` here as well. cvc5 nests these -- one per conjunct
+    -- of an `and` assertion, 1,820 deep on QF_IDL/sep/hardware/LD_ST_neg.2step -- and walking `t`
+    -- at every level of the chain made this quadratic in the chain's length.
+    --
+    -- `@p`'s atoms are not filtered by `bound`, so a variable bound between here and `@p` is
+    -- reported free when it is not. That only ever costs sharing (the term is treated as open and
+    -- resolved per scope, as it was before any of this), never soundness.
+    if attrs.any (· == Sexp.atom ":named") then
+      attrs.foldl (fun acc x => atomsOf x acc bound) acc
+    else
+      (t :: attrs).foldl (fun acc x => atomsOf x acc bound) acc
   | .expr xs => xs.foldl (fun acc x => atomsOf x acc bound) acc
+
+/-- The atoms a named term can mention, through the names it uses: `atomsOf` of its own
+    S-expression, plus the same set for every name that appears in it. Memoized in `namedAtoms`,
+    and computed only when a `closed` test actually asks for it -- a proof with no binder never
+    asks, so it never pays. -/
+partial def atomsOfNamed (s : String) : M (Std.HashSet String) := do
+  if let some atoms := (← get).namedAtoms[s]? then return atoms
+  let some t := (← get).named[s]? | return {}
+  -- names are defined before use, so this cannot cycle; seed the entry anyway so that a
+  -- malformed proof loops no further than once
+  modify fun st => { st with namedAtoms := st.namedAtoms.insert s {} }
+  let direct := atomsOf t {}
+  let mut acc := direct
+  for a in direct do
+    if a != s && (← get).named.contains a then
+      for b in ← atomsOfNamed a do acc := acc.insert b
+  modify fun st => { st with namedAtoms := st.namedAtoms.insert s acc }
+  return acc
 
 /-- Turn a term into an arena node under the binding environment. -/
 partial def term (env : Env) : Sexp → M Nat
@@ -202,12 +233,11 @@ partial def term (env : Env) : Sexp → M Nat
         -- Resolving a named term anew under every binder scope is what makes the parser
         -- super-linear on quantifier-heavy proofs (a 150 KB sledgehammer proof took 80 s here):
         -- a term that mentions none of the scope's variables means the same everywhere
-        let st ← get
-        let closed := match st.namedAtoms[s]? with
-          | some atoms => env.vars.isEmpty || !env.vars.keys.any (atoms.contains ·)
-          | none => false
+        let closed ← if env.vars.isEmpty then pure true else do
+          let atoms ← atomsOfNamed s
+          pure !(env.vars.keys.any (atoms.contains ·))
         if closed then
-          if let some n := st.closedCache[s]? then return n
+          if let some n := (← get).closedCache[s]? then return n
           let n ← term env t
           modify fun st => { st with closedCache := st.closedCache.insert s n }
           return n
@@ -224,18 +254,8 @@ partial def term (env : Env) : Sexp → M Nat
     let n ← term env t
     let rec go : List Sexp → M Unit
       | .atom ":named" :: .atom name :: rest => do
-        let st ← get
-        -- the atoms of `t`, and of every named term it mentions (names are defined before use)
-        let atoms := Id.run do
-          let direct := atomsOf t {}
-          let mut acc := direct
-          for a in direct do
-            if let some more := st.namedAtoms[a]? then
-              for b in more do acc := acc.insert b
-          return acc
         modify fun st => { st with named := st.named.insert name t,
-                                   namedCache := st.namedCache.insert (name, env.id) n,
-                                   namedAtoms := st.namedAtoms.insert name atoms }
+                                   namedCache := st.namedCache.insert (name, env.id) n }
         go rest
       | _ :: rest => go rest
       | [] => return ()
