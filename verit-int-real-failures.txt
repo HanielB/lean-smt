@@ -9,20 +9,73 @@ from Carcara's parser, before any checking began. 650 of them check *valid*
 after the fix (round six); the remaining 3 are listed separately at the end and
 fail for unrelated reasons.
 
-The defect was Carcara's, not veriT's. `--allow-int-real-subtyping` was consulted
-for the operators whose argument sorts are fixed and numeric (+, *, /, the order
-comparisons) but not for the positions where the sorts merely have to agree with
-each other: the arguments of = and distinct, the branches of an ite, and the
-arguments of an uninterpreted function. veriT writes an integer literal on one
-side of an equality whose other side is real-sorted, which is legal under the
-flag. The fix is confined to those three polymorphic positions, so (div 1.0 2.0)
-is still rejected.
+
+What veriT emits
+------------------------------------------------------
+
+One rule, one operator, one shape. Every rejected position is the `=` of a
+`unary_minus_simplify` step:
+
+    (! (- 1.0) :named @p_1)                                   in an assumption
+    ...
+    (step t28 (cl (= @p_1 (- 1))) :rule unary_minus_simplify)
+
+`@p_1` names `(- 1.0)`, which is Real. veriT prints the simplified right-hand
+side as `(- 1)` -- unary minus on an *integer* literal, so Int. The `=` therefore
+has Real on one side and Int on the other. `(- 1)` itself is fine: `-` is one of
+the operators whose argument sorts are fixed and numeric, and those already
+honoured `--allow-int-real-subtyping`. It is the `=` above it that was rejected.
+
+Measured on a stratified sample of 36 proofs, six per family across all nine
+families, regenerated with the runner's own veriT invocation:
+
+  - the position Carcara reported is the `=` of a `unary_minus_simplify` step in
+    36 of 36. No other operator and no other rule appears.
+  - the parser stops at its first error, so that alone would only characterise
+    the *first* offending term. Scanning every step of those 36 proofs for the
+    same shape -- an integer literal equated with a named real-sorted term --
+    finds 221 occurrences, again all `unary_minus_simplify` and no other rule.
+
+So on this population the defect is reached through exactly one of the three
+positions the fix relaxed.
+
+
+What Carcara fixed (commit 92d8a42f, `parser: honour Int/Real subtyping at the
+polymorphic positions`)
+------------------------------------------------------
+
+`--allow-int-real-subtyping` was consulted for the operators whose argument sorts
+are fixed and numeric, but not for the positions where the sort is not fixed by
+the operator and is merely required to *agree*. Three call sites changed, from
+`check_sort_eq`/`check_sort_all_eq` to the `_poly` variants:
+
+    arguments of `=` and `distinct`     <-- the one these proofs trip on
+    the two branches of an `ite`
+    arguments of an uninterpreted function
+
+Already correct, because their argument sorts are fixed and numeric:
+
+    + - * / abs, and the order comparisons < <= > >=
+
+Deliberately still strict, because they require a *specific* numeric sort:
+
+    div mod to_int is_int, and the trigonometric operators
+
+so `(div 1.0 2.0)` is still rejected, and nothing changes when the flag is off.
 
 The same defect had appeared in an earlier three-logic round on 194 QF_LRA
 proofs, where it was misattributed to lia_generic residue.
 
-Rounds: 'before' = exp/results/alethe-lean/verit-4, 'after' = verit-6.
-Paths are relative to /barrett/scratch/benchmarks/benchmark_repos/SMT-LIB/non-incremental/
+
+Provenance
+------------------------------------------------------
+
+'before' = exp/results/alethe-lean/verit-4, 'after' = verit-6. The 653 are every
+round-four task whose output carries the sort error above; all 653 had Carcara
+verdict `error`, and all 653 recorded a file:line:column, which is what the
+sample resolves against the regenerated proofs.
+Paths below are relative to /barrett/scratch/benchmarks/benchmark_repos/SMT-LIB/non-incremental/
+
 
 By logic
 ------------------------------------------------------
@@ -45,656 +98,658 @@ By family
 
 The 650 proofs that check valid after the fix
 ------------------------------------------------------
-  QF_LRA/LassoRanker/CooperatingT2/afagp-fail.t2.c_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/agafp.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/collatz.t2.c_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/collatz.t2.c_Iteration3_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/curious4.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/disj_nightmare.t2.c_Iteration1_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/disj_nightmare.t2.c_Iteration2_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/efegp.t2.c_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/efegp.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/eric.t2.c_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/eric.t2.c_Iteration1_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/ex11.t2.c_Iteration1_Lasso_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/ex11.t2.c_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/heidy7-simple.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/heidy7.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/polyrank4.t2.c_Iteration8_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration5_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration5_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration6_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration6_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration7_Loop_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/Ben-Amram-2010LMCS-Ex2.3_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/Ben-Amram-2010LMCS-Ex2.3_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig3_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig3_true-termination.c_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig7a_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_4-lexTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_5-nestedTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_6-nestedTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_7-nestedTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/HarrisLalNoriRajamani-2010SAS-Fig1_true-termination.c_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/KroeningSharyginaTsitovichWintersteiger-2010CAV-Fig1_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex2_true-termination.c_Iteration1_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_4-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/Masse_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/Masse_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Loop_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/joey_false-termination.c_Iteration2_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/joey_false-termination.c_Iteration2_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/SV-COMP/min_rf_true-termination.c_Iteration1_Loop_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/2013POPL-BenAmGen-Ex3.20.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/2013POPL-BenAmGen-Ex3.20.bpl_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/BenAmram-2010LMCS-Ex2.3.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/BenAmram-2010LMCS-Ex2.3.bpl_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/BradleyMannaSipma-2005ICALP-Fig1-deterministic.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/BradleyMannaSipma-2005ICALP-Fig1-deterministic.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Loop_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Cairo2.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Lasso_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Loop_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Loop_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_5-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Gulwani.bpl_Iteration1_Lasso_6-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Lobnya-Boolean-Reordered.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Lobnya-Boolean-Reordered.bpl_Iteration1_Loop_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/Madrid.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/MenloPark.bpl_Iteration1_Lasso_3-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/NonTerminationDifficult.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/OpposedDisjuncts.bpl_Iteration1_Lasso_2-pieceTemplate.smt2
-  QF_LRA/LassoRanker/Ultimate/OpposedDisjuncts.bpl_Iteration1_Lasso_5-phaseTemplate.smt2
-  QF_LRA/check/bignum_lra2.smt2
-  QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0112.smt2
-  QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0155.smt2
-  QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0156.smt2
-  QF_LRA/meti-tarski/Chua/1/VC1/L/Chua-1-VC1-L-chunk-0155.smt2
-  QF_LRA/meti-tarski/Chua/1/VC2/U/Chua-1-VC2-U-chunk-0155.smt2
-  QF_LRA/meti-tarski/asin/8/vars4/asin-8-vars4-chunk-0022.smt2
-  QF_LRA/meti-tarski/atan/problem/1/atan-problem-1-chunk-0014.smt2
-  QF_LRA/meti-tarski/atan/problem/1/atan-problem-1-chunk-0030.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0009.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0016.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0030.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0032.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0036.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0037.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0039.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0059.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0106.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0109.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0118.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0126.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0131.smt2
-  QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0132.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0016.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0018.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0020.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0023.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0024.smt2
-  QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0025.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0006.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0037.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0040.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0041.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0042.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0044.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0046.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0048.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0058.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0060.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0072.smt2
-  QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0074.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0012.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0045.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0048.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0049.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0050.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0052.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0054.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0056.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0066.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0068.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0081.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0083.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0098.smt2
-  QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0099.smt2
-  QF_LRA/meti-tarski/log/fun-ineq/log-fun-ineq-g-chunk-0010.smt2
-  QF_LRA/meti-tarski/log/fun-ineq/log-fun-ineq-g-chunk-0038.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0019.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0027.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0033.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0040.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0044.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0046.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0047.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0052.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0059.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0061.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0071.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0088.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0090.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0097.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0099.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0102.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0115.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0117.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0145.smt2
-  QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0147.smt2
-  QF_LRA/meti-tarski/sin/344/3/sin-344-3-chunk-0013.smt2
-  QF_LRA/meti-tarski/sin/344/3/sin-344-3-chunk-0016.smt2
-  QF_LRA/meti-tarski/sin/344/3/sin-344-3-weak-chunk-0013.smt2
-  QF_LRA/meti-tarski/sin/344/3/sin-344-3-weak-chunk-0016.smt2
-  QF_LRA/meti-tarski/sin/344/4/sin-344-4-chunk-0017.smt2
-  QF_LRA/meti-tarski/sin/344/4/sin-344-4-chunk-0020.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0010.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0012.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0023.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0032.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0036.smt2
-  QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0042.smt2
-  QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0029.smt2
-  QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0035.smt2
-  QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0415.smt2
-  QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0707.smt2
-  QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0027.smt2
-  QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0048.smt2
-  QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0051.smt2
-  QF_LRA/miplib/danoint-30.smt2
-  QF_LRA/miplib/danoint-50.smt2
-  QF_LRA/miplib/fixnet-1000.smt2
-  QF_LRA/miplib/pk1--1.smt2
-  QF_LRA/miplib/pp08a-1000.smt2
-  QF_LRA/miplib/pp08a-2000.smt2
-  QF_LRA/miplib/pp08a-3000.smt2
-  QF_LRA/miplib/pp08a-4000.smt2
-  QF_LRA/miplib/vpm2-0.smt2
-  QF_RDL/check/bignum_rdl2.smt2
-  QF_RDL/sal/fischer3-mutex-1.smt2
-  QF_RDL/sal/fischer3-mutex-10.smt2
-  QF_RDL/sal/fischer3-mutex-11.smt2
-  QF_RDL/sal/fischer3-mutex-12.smt2
-  QF_RDL/sal/fischer3-mutex-13.smt2
-  QF_RDL/sal/fischer3-mutex-14.smt2
-  QF_RDL/sal/fischer3-mutex-15.smt2
-  QF_RDL/sal/fischer3-mutex-16.smt2
-  QF_RDL/sal/fischer3-mutex-17.smt2
-  QF_RDL/sal/fischer3-mutex-18.smt2
-  QF_RDL/sal/fischer3-mutex-19.smt2
-  QF_RDL/sal/fischer3-mutex-2.smt2
-  QF_RDL/sal/fischer3-mutex-20.smt2
-  QF_RDL/sal/fischer3-mutex-3.smt2
-  QF_RDL/sal/fischer3-mutex-4.smt2
-  QF_RDL/sal/fischer3-mutex-5.smt2
-  QF_RDL/sal/fischer3-mutex-6.smt2
-  QF_RDL/sal/fischer3-mutex-7.smt2
-  QF_RDL/sal/fischer3-mutex-8.smt2
-  QF_RDL/sal/fischer3-mutex-9.smt2
-  QF_RDL/sal/fischer6-mutex-1.smt2
-  QF_RDL/sal/fischer6-mutex-10.smt2
-  QF_RDL/sal/fischer6-mutex-11.smt2
-  QF_RDL/sal/fischer6-mutex-12.smt2
-  QF_RDL/sal/fischer6-mutex-13.smt2
-  QF_RDL/sal/fischer6-mutex-14.smt2
-  QF_RDL/sal/fischer6-mutex-15.smt2
-  QF_RDL/sal/fischer6-mutex-2.smt2
-  QF_RDL/sal/fischer6-mutex-3.smt2
-  QF_RDL/sal/fischer6-mutex-4.smt2
-  QF_RDL/sal/fischer6-mutex-5.smt2
-  QF_RDL/sal/fischer6-mutex-6.smt2
-  QF_RDL/sal/fischer6-mutex-7.smt2
-  QF_RDL/sal/fischer6-mutex-8.smt2
-  QF_RDL/sal/fischer6-mutex-9.smt2
-  QF_RDL/sal/fischer9-mutex-1.smt2
-  QF_RDL/sal/fischer9-mutex-10.smt2
-  QF_RDL/sal/fischer9-mutex-11.smt2
-  QF_RDL/sal/fischer9-mutex-12.smt2
-  QF_RDL/sal/fischer9-mutex-2.smt2
-  QF_RDL/sal/fischer9-mutex-3.smt2
-  QF_RDL/sal/fischer9-mutex-4.smt2
-  QF_RDL/sal/fischer9-mutex-5.smt2
-  QF_RDL/sal/fischer9-mutex-6.smt2
-  QF_RDL/sal/fischer9-mutex-7.smt2
-  QF_RDL/sal/fischer9-mutex-8.smt2
-  QF_RDL/sal/fischer9-mutex-9.smt2
-  QF_RDL/skdmxa/skdmxa-3x3-5.smt2
-  QF_UFLRA/FFT/smtlib.624882.smt2
-  QF_UFLRA/FFT/smtlib.624898.smt2
-  QF_UFLRA/FFT/smtlib.624916.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_29.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_10.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_11.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_12.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_13.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_14.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_15.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_16.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_17.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_18.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_19.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_20.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_21.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_22.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_23.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_24.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_25.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_26.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_27.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_28.smt2
-  QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_29.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_06.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_09.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_13.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_18.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_21.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_24.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_27.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_28.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_36.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_45.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_50.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_58.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_61.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_67.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_71.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_73.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_00.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_01.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_02.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_03.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_04.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_05.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_06.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_07.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_08.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_09.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_10.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_11.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_12.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_13.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_14.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_15.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_16.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_17.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_18.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_19.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_20.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_21.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_22.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_23.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_24.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_25.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_26.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_27.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_28.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_29.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_30.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_31.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_32.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_33.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_34.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_35.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_36.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_37.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_38.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_39.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_40.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_41.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_42.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_43.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_44.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_45.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_46.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_47.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_48.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_49.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_50.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_51.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_52.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_53.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_54.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_55.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_56.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_57.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_58.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_59.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_60.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_61.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_62.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_63.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_64.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_65.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_66.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_67.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_68.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_69.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_70.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_71.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_72.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_73.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_74.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_75.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_76.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_77.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_78.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_79.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_80.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_81.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_82.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_83.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_84.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_85.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_86.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_87.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_88.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_89.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_90.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_91.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_92.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_93.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_94.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_95.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_96.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_97.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_98.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_99.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_01.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_19.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_24.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_33.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_43.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_57.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_67.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_73.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_81.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_07.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_23.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_35.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_48.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_58.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_61.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_68.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_71.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_00.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_01.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_02.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_03.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_04.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_05.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_06.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_07.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_08.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_09.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_10.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_11.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_12.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_13.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_14.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_15.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_16.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_17.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_18.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_19.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_20.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_21.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_22.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_23.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_24.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_25.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_26.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_27.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_28.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_29.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_30.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_31.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_32.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_33.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_34.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_35.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_36.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_37.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_38.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_39.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_40.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_41.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_42.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_43.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_44.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_45.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_46.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_47.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_48.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_49.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_50.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_51.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_52.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_53.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_54.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_55.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_56.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_57.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_58.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_59.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_60.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_61.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_62.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_63.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_64.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_65.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_66.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_67.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_68.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_69.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_70.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_71.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_72.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_73.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_74.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_75.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_76.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_77.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_78.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_79.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_80.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_81.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_82.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_83.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_84.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_85.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_86.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_87.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_88.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_89.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_90.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_91.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_92.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_93.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_94.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_95.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_96.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_97.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_98.smt2
-  QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_99.smt2
+(with the line:column Carcara reported in round four)
+
+    72142:17    QF_LRA/LassoRanker/CooperatingT2/afagp-fail.t2.c_Iteration1_Lasso_7-phaseTemplate.smt2
+     6161:17    QF_LRA/LassoRanker/CooperatingT2/agafp.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
+    12576:17    QF_LRA/LassoRanker/CooperatingT2/collatz.t2.c_Iteration1_Loop_4-pieceTemplate.smt2
+    58068:17    QF_LRA/LassoRanker/CooperatingT2/collatz.t2.c_Iteration3_Loop_7-phaseTemplate.smt2
+    56659:17    QF_LRA/LassoRanker/CooperatingT2/curious4.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
+     1546:16    QF_LRA/LassoRanker/CooperatingT2/disj_nightmare.t2.c_Iteration1_Loop_7-phaseTemplate.smt2
+     1600:16    QF_LRA/LassoRanker/CooperatingT2/disj_nightmare.t2.c_Iteration2_Loop_7-phaseTemplate.smt2
+     8964:16    QF_LRA/LassoRanker/CooperatingT2/efegp.t2.c_Iteration1_Lasso_3-pieceTemplate.smt2
+    17024:17    QF_LRA/LassoRanker/CooperatingT2/efegp.t2.c_Iteration1_Lasso_4-pieceTemplate.smt2
+    13366:17    QF_LRA/LassoRanker/CooperatingT2/eric.t2.c_Iteration1_Loop_4-pieceTemplate.smt2
+      508:16    QF_LRA/LassoRanker/CooperatingT2/eric.t2.c_Iteration1_Loop_7-phaseTemplate.smt2
+    19735:17    QF_LRA/LassoRanker/CooperatingT2/ex11.t2.c_Iteration1_Lasso_2-pieceTemplate.smt2
+     1090:16    QF_LRA/LassoRanker/CooperatingT2/ex11.t2.c_Iteration1_Lasso_7-phaseTemplate.smt2
+     4964:16    QF_LRA/LassoRanker/CooperatingT2/heidy7-simple.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
+     6297:16    QF_LRA/LassoRanker/CooperatingT2/heidy7.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
+    28113:17    QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_2-pieceTemplate.smt2
+    34439:17    QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_3-pieceTemplate.smt2
+    54148:17    QF_LRA/LassoRanker/CooperatingT2/janne_complex.t2.c_Iteration3_Lasso_6-phaseTemplate.smt2
+    38938:17    QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Lasso_4-pieceTemplate.smt2
+    43529:17    QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Loop_4-pieceTemplate.smt2
+   123704:17    QF_LRA/LassoRanker/CooperatingT2/p-46.t2.c_Iteration2_Loop_7-phaseTemplate.smt2
+     7579:16    QF_LRA/LassoRanker/CooperatingT2/polyrank4.t2.c_Iteration8_Loop_4-pieceTemplate.smt2
+    10399:16    QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration5_Loop_3-pieceTemplate.smt2
+    35432:17    QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration5_Loop_4-pieceTemplate.smt2
+    48106:17    QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration6_Loop_4-pieceTemplate.smt2
+   101552:17    QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration6_Loop_7-phaseTemplate.smt2
+    24718:16    QF_LRA/LassoRanker/CooperatingT2/sas2.t2.c_Iteration7_Loop_5-phaseTemplate.smt2
+    15987:17    QF_LRA/LassoRanker/SV-COMP/Ben-Amram-2010LMCS-Ex2.3_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
+    14638:17    QF_LRA/LassoRanker/SV-COMP/Ben-Amram-2010LMCS-Ex2.3_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
+     5551:17    QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_2-pieceTemplate.smt2
+    12811:17    QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
+     1008:16    QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
+      777:16    QF_LRA/LassoRanker/SV-COMP/BradleyMannaSipma-2005ICALP-Fig1_true-termination.c_Iteration1_Lasso_6-phaseTemplate.smt2
+    10935:17    QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig3_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
+    18484:17    QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig3_true-termination.c_Iteration1_Loop_4-pieceTemplate.smt2
+    15542:17    QF_LRA/LassoRanker/SV-COMP/CookSeeZuleger-2013TACAS-Fig7a_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
+     5797:17    QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_4-lexTemplate.smt2
+      917:16    QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_5-nestedTemplate.smt2
+      697:16    QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_6-nestedTemplate.smt2
+      697:16    QF_LRA/LassoRanker/SV-COMP/GulwaniJainKoskinen-2009PLDI-Fig1_true-termination.c_Iteration1_Lasso_7-nestedTemplate.smt2
+     3381:16    QF_LRA/LassoRanker/SV-COMP/HarrisLalNoriRajamani-2010SAS-Fig1_true-termination.c_Iteration1_Lasso_4-pieceTemplate.smt2
+      438:16    QF_LRA/LassoRanker/SV-COMP/KroeningSharyginaTsitovichWintersteiger-2010CAV-Fig1_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
+    31711:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex2_true-termination.c_Iteration1_Loop_7-phaseTemplate.smt2
+     4101:16    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_2-pieceTemplate.smt2
+    10588:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_4-phaseTemplate.smt2
+    14290:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Lasso_5-phaseTemplate.smt2
+    10828:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_4-pieceTemplate.smt2
+    17828:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_6-phaseTemplate.smt2
+    33895:17    QF_LRA/LassoRanker/SV-COMP/LeeJonesBen-Amram-2001POPL-Ex5_true-termination.c_Iteration2_Loop_7-phaseTemplate.smt2
+    11025:17    QF_LRA/LassoRanker/SV-COMP/Masse_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
+     6102:17    QF_LRA/LassoRanker/SV-COMP/Masse_true-termination.c_Iteration1_Loop_3-pieceTemplate.smt2
+    12558:17    QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_3-pieceTemplate.smt2
+    14171:17    QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_4-pieceTemplate.smt2
+    17265:17    QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Lasso_5-phaseTemplate.smt2
+    11877:17    QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Loop_4-pieceTemplate.smt2
+    12437:17    QF_LRA/LassoRanker/SV-COMP/NoriSharma-2013FSE-Fig8_true-termination.c_Iteration1_Loop_5-phaseTemplate.smt2
+     3930:16    QF_LRA/LassoRanker/SV-COMP/joey_false-termination.c_Iteration2_Loop_4-pieceTemplate.smt2
+    23265:16    QF_LRA/LassoRanker/SV-COMP/joey_false-termination.c_Iteration2_Loop_7-phaseTemplate.smt2
+      473:16    QF_LRA/LassoRanker/SV-COMP/min_rf_true-termination.c_Iteration1_Loop_6-phaseTemplate.smt2
+     2360:16    QF_LRA/LassoRanker/Ultimate/2013POPL-BenAmGen-Ex3.20.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+     2360:16    QF_LRA/LassoRanker/Ultimate/2013POPL-BenAmGen-Ex3.20.bpl_Iteration1_Loop_4-pieceTemplate.smt2
+    19894:17    QF_LRA/LassoRanker/Ultimate/BenAmram-2010LMCS-Ex2.3.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+    19894:17    QF_LRA/LassoRanker/Ultimate/BenAmram-2010LMCS-Ex2.3.bpl_Iteration1_Loop_4-pieceTemplate.smt2
+    14508:17    QF_LRA/LassoRanker/Ultimate/BradleyMannaSipma-2005ICALP-Fig1-deterministic.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+    23408:17    QF_LRA/LassoRanker/Ultimate/BradleyMannaSipma-2005ICALP-Fig1-deterministic.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
+     3080:16    QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+     3080:16    QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Loop_4-pieceTemplate.smt2
+     4797:16    QF_LRA/LassoRanker/Ultimate/Braverman-2006CAV-Ex1-int.bpl_Iteration1_Loop_5-phaseTemplate.smt2
+    16566:17    QF_LRA/LassoRanker/Ultimate/Cairo2.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
+     4227:17    QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+    11967:17    QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Lasso_6-phaseTemplate.smt2
+     4227:17    QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Loop_4-pieceTemplate.smt2
+    11967:17    QF_LRA/LassoRanker/Ultimate/Canberra.bpl_Iteration1_Loop_6-phaseTemplate.smt2
+     1272:16    QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_2-pieceTemplate.smt2
+     2354:16    QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_3-pieceTemplate.smt2
+     1205:16    QF_LRA/LassoRanker/Ultimate/Collatz.bpl_Iteration1_Loop_5-phaseTemplate.smt2
+      337:16    QF_LRA/LassoRanker/Ultimate/Gulwani.bpl_Iteration1_Lasso_6-phaseTemplate.smt2
+    28581:17    QF_LRA/LassoRanker/Ultimate/Lobnya-Boolean-Reordered.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
+    28594:17    QF_LRA/LassoRanker/Ultimate/Lobnya-Boolean-Reordered.bpl_Iteration1_Loop_7-phaseTemplate.smt2
+     2586:16    QF_LRA/LassoRanker/Ultimate/Madrid.bpl_Iteration1_Lasso_4-pieceTemplate.smt2
+     9157:17    QF_LRA/LassoRanker/Ultimate/MenloPark.bpl_Iteration1_Lasso_3-pieceTemplate.smt2
+    20416:17    QF_LRA/LassoRanker/Ultimate/NonTerminationDifficult.bpl_Iteration1_Lasso_7-phaseTemplate.smt2
+     5066:17    QF_LRA/LassoRanker/Ultimate/OpposedDisjuncts.bpl_Iteration1_Lasso_2-pieceTemplate.smt2
+     1893:16    QF_LRA/LassoRanker/Ultimate/OpposedDisjuncts.bpl_Iteration1_Lasso_5-phaseTemplate.smt2
+       28:16    QF_LRA/check/bignum_lra2.smt2
+       17:15    QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0112.smt2
+        5:15    QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0155.smt2
+        5:15    QF_LRA/meti-tarski/Chua/1/IL/L/Chua-1-IL-L-chunk-0156.smt2
+        5:15    QF_LRA/meti-tarski/Chua/1/VC1/L/Chua-1-VC1-L-chunk-0155.smt2
+        5:15    QF_LRA/meti-tarski/Chua/1/VC2/U/Chua-1-VC2-U-chunk-0155.smt2
+        5:15    QF_LRA/meti-tarski/asin/8/vars4/asin-8-vars4-chunk-0022.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/1/atan-problem-1-chunk-0014.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/1/atan-problem-1-chunk-0030.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0009.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0016.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0030.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0032.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0036.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0037.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0039.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0059.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0106.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0109.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0118.smt2
+        5:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0126.smt2
+       19:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0131.smt2
+       18:15    QF_LRA/meti-tarski/atan/problem/2/weak2/atan-problem-2-weak2-chunk-0132.smt2
+       19:16    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0016.smt2
+       17:15    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0018.smt2
+        6:15    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0020.smt2
+       19:16    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0023.smt2
+       21:16    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0024.smt2
+        9:15    QF_LRA/meti-tarski/bottom-plate-mixer/bottom-plate-mixer-chunk-0025.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0006.smt2
+       23:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0037.smt2
+       21:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0040.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0041.smt2
+       22:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0042.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0044.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0046.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0048.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0058.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0060.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0072.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/cbrt-problem-3-chunk-0074.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0012.smt2
+       23:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0045.smt2
+       21:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0048.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0049.smt2
+       22:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0050.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0052.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0054.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0056.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0066.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0068.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0081.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0083.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0098.smt2
+        5:15    QF_LRA/meti-tarski/cbrt/3/weak/cbrt-problem-3-weak-chunk-0099.smt2
+        5:15    QF_LRA/meti-tarski/log/fun-ineq/log-fun-ineq-g-chunk-0010.smt2
+        5:15    QF_LRA/meti-tarski/log/fun-ineq/log-fun-ineq-g-chunk-0038.smt2
+        5:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0019.smt2
+        5:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0027.smt2
+       22:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0033.smt2
+       21:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0040.smt2
+       22:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0044.smt2
+       23:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0046.smt2
+        5:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0047.smt2
+       14:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0052.smt2
+       21:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0059.smt2
+       33:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0061.smt2
+       21:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0071.smt2
+       31:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0088.smt2
+       38:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0090.smt2
+       33:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0097.smt2
+       38:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0099.smt2
+       39:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0102.smt2
+       24:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0115.smt2
+       16:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0117.smt2
+       24:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0145.smt2
+       21:15    QF_LRA/meti-tarski/polypaver/bench-exp-3d/polypaver-bench-exp-3d-chunk-0147.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/3/sin-344-3-chunk-0013.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/3/sin-344-3-chunk-0016.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/3/sin-344-3-weak-chunk-0013.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/3/sin-344-3-weak-chunk-0016.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/4/sin-344-4-chunk-0017.smt2
+        5:15    QF_LRA/meti-tarski/sin/344/4/sin-344-4-chunk-0020.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0010.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0012.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0023.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0032.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0036.smt2
+        5:15    QF_LRA/meti-tarski/sin/problem/8/weak/sin-problem-8-weak-chunk-0042.smt2
+        5:15    QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0029.smt2
+       13:16    QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0035.smt2
+       13:16    QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0415.smt2
+       13:16    QF_LRA/meti-tarski/sqrt/1mcosq/8/sqrt-1mcosq-8-chunk-0707.smt2
+        5:15    QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0027.smt2
+        5:15    QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0048.smt2
+        5:15    QF_LRA/meti-tarski/sqrt/problem/sqrt-problem-Melquiond2-chunk-0051.smt2
+     5576:17    QF_LRA/miplib/danoint-30.smt2
+     5576:17    QF_LRA/miplib/danoint-50.smt2
+    13291:18    QF_LRA/miplib/fixnet-1000.smt2
+     5829:18    QF_LRA/miplib/pk1--1.smt2
+     8543:18    QF_LRA/miplib/pp08a-1000.smt2
+     8543:18    QF_LRA/miplib/pp08a-2000.smt2
+     8543:18    QF_LRA/miplib/pp08a-3000.smt2
+     8543:18    QF_LRA/miplib/pp08a-4000.smt2
+     5389:18    QF_LRA/miplib/vpm2-0.smt2
+        6:15    QF_RDL/check/bignum_rdl2.smt2
+      532:16    QF_RDL/sal/fischer3-mutex-1.smt2
+     4663:17    QF_RDL/sal/fischer3-mutex-10.smt2
+     5122:17    QF_RDL/sal/fischer3-mutex-11.smt2
+     5581:17    QF_RDL/sal/fischer3-mutex-12.smt2
+     6040:17    QF_RDL/sal/fischer3-mutex-13.smt2
+     6499:17    QF_RDL/sal/fischer3-mutex-14.smt2
+     6958:17    QF_RDL/sal/fischer3-mutex-15.smt2
+     7417:17    QF_RDL/sal/fischer3-mutex-16.smt2
+     7876:17    QF_RDL/sal/fischer3-mutex-17.smt2
+     8335:17    QF_RDL/sal/fischer3-mutex-18.smt2
+     8794:17    QF_RDL/sal/fischer3-mutex-19.smt2
+      991:16    QF_RDL/sal/fischer3-mutex-2.smt2
+     9253:17    QF_RDL/sal/fischer3-mutex-20.smt2
+     1450:17    QF_RDL/sal/fischer3-mutex-3.smt2
+     1909:17    QF_RDL/sal/fischer3-mutex-4.smt2
+     2368:17    QF_RDL/sal/fischer3-mutex-5.smt2
+     2827:17    QF_RDL/sal/fischer3-mutex-6.smt2
+     3286:17    QF_RDL/sal/fischer3-mutex-7.smt2
+     3745:17    QF_RDL/sal/fischer3-mutex-8.smt2
+     4204:17    QF_RDL/sal/fischer3-mutex-9.smt2
+     1100:16    QF_RDL/sal/fischer6-mutex-1.smt2
+     9924:17    QF_RDL/sal/fischer6-mutex-10.smt2
+    10904:17    QF_RDL/sal/fischer6-mutex-11.smt2
+    11884:17    QF_RDL/sal/fischer6-mutex-12.smt2
+    12864:17    QF_RDL/sal/fischer6-mutex-13.smt2
+    13844:17    QF_RDL/sal/fischer6-mutex-14.smt2
+    14824:17    QF_RDL/sal/fischer6-mutex-15.smt2
+     2076:17    QF_RDL/sal/fischer6-mutex-2.smt2
+     3064:17    QF_RDL/sal/fischer6-mutex-3.smt2
+     4044:17    QF_RDL/sal/fischer6-mutex-4.smt2
+     5024:17    QF_RDL/sal/fischer6-mutex-5.smt2
+     6004:17    QF_RDL/sal/fischer6-mutex-6.smt2
+     6984:17    QF_RDL/sal/fischer6-mutex-7.smt2
+     7964:17    QF_RDL/sal/fischer6-mutex-8.smt2
+     8944:17    QF_RDL/sal/fischer6-mutex-9.smt2
+     1760:17    QF_RDL/sal/fischer9-mutex-1.smt2
+    16025:17    QF_RDL/sal/fischer9-mutex-10.smt2
+    17610:17    QF_RDL/sal/fischer9-mutex-11.smt2
+    19195:18    QF_RDL/sal/fischer9-mutex-12.smt2
+     3345:17    QF_RDL/sal/fischer9-mutex-2.smt2
+     4930:17    QF_RDL/sal/fischer9-mutex-3.smt2
+     6515:17    QF_RDL/sal/fischer9-mutex-4.smt2
+     8100:17    QF_RDL/sal/fischer9-mutex-5.smt2
+     9685:17    QF_RDL/sal/fischer9-mutex-6.smt2
+    11270:17    QF_RDL/sal/fischer9-mutex-7.smt2
+    12855:17    QF_RDL/sal/fischer9-mutex-8.smt2
+    14440:17    QF_RDL/sal/fischer9-mutex-9.smt2
+    34995:17    QF_RDL/skdmxa/skdmxa-3x3-5.smt2
+        6:15    QF_UFLRA/FFT/smtlib.624882.smt2
+        6:15    QF_UFLRA/FFT/smtlib.624898.smt2
+        3:15    QF_UFLRA/FFT/smtlib.624916.smt2
+     1648:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_14.smt2
+     1626:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_22.smt2
+     1602:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_25.smt2
+     1617:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_26.smt2
+     1595:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_27.smt2
+     1607:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0200_10_29.smt2
+     1955:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_10.smt2
+     1957:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_11.smt2
+     1967:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_12.smt2
+     2006:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_13.smt2
+     1996:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_14.smt2
+     1948:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_15.smt2
+     1967:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_16.smt2
+     1969:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_17.smt2
+     1983:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_18.smt2
+     1957:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_19.smt2
+     1933:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_21.smt2
+     1966:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_22.smt2
+     1958:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_23.smt2
+     1990:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_24.smt2
+     1944:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_25.smt2
+     1962:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_26.smt2
+     1938:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_27.smt2
+     1898:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_28.smt2
+     1946:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0250_10_29.smt2
+     2295:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_10.smt2
+     2292:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_11.smt2
+     2312:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_12.smt2
+     2342:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_13.smt2
+     2332:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_14.smt2
+     2284:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_15.smt2
+     2298:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_16.smt2
+     2307:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_17.smt2
+     2317:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_18.smt2
+     2296:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_19.smt2
+     2282:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_20.smt2
+     2271:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_21.smt2
+     2303:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_22.smt2
+     2300:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_23.smt2
+     2326:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_24.smt2
+     2283:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_25.smt2
+     2302:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_26.smt2
+     2269:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_27.smt2
+     2237:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_28.smt2
+     2282:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_10_0300_10_29.smt2
+     3203:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_12.smt2
+     3174:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_16.smt2
+     3227:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_21.smt2
+     3234:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_24.smt2
+     3196:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0400_10_27.smt2
+     3849:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_10.smt2
+     3926:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_11.smt2
+     3890:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_12.smt2
+     3993:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_13.smt2
+     3842:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_14.smt2
+     3889:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_15.smt2
+     3862:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_16.smt2
+     3906:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_17.smt2
+     3900:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_18.smt2
+     3928:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_19.smt2
+     3942:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_20.smt2
+     3913:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_21.smt2
+     3951:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_22.smt2
+     3912:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_23.smt2
+     3895:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_24.smt2
+     3919:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_25.smt2
+     3873:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_27.smt2
+     3876:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_28.smt2
+     3934:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0500_10_29.smt2
+     4523:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_10.smt2
+     4604:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_11.smt2
+     4563:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_12.smt2
+     4657:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_13.smt2
+     4520:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_14.smt2
+     4556:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_15.smt2
+     4540:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_16.smt2
+     4594:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_17.smt2
+     4581:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_18.smt2
+     4610:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_19.smt2
+     4611:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_20.smt2
+     4590:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_21.smt2
+     4629:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_22.smt2
+     4587:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_23.smt2
+     4570:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_24.smt2
+     4582:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_25.smt2
+     4599:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_26.smt2
+     4555:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_27.smt2
+     4550:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_28.smt2
+     4604:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_20_0600_10_29.smt2
+     4920:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_13.smt2
+     4818:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_15.smt2
+     4848:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0600_10_18.smt2
+     5818:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_10.smt2
+     5835:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_11.smt2
+     5846:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_12.smt2
+     5941:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_13.smt2
+     5848:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_14.smt2
+     5831:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_15.smt2
+     5808:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_16.smt2
+     5858:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_17.smt2
+     5863:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_18.smt2
+     5838:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_19.smt2
+     5870:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_20.smt2
+     5831:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_21.smt2
+     5774:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_22.smt2
+     5813:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_23.smt2
+     5786:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_24.smt2
+     5810:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_25.smt2
+     5815:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_26.smt2
+     5892:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_27.smt2
+     5805:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_28.smt2
+     5842:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0750_10_29.smt2
+     6841:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_10.smt2
+     6841:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_11.smt2
+     6856:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_12.smt2
+     6967:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_13.smt2
+     6862:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_14.smt2
+     6837:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_15.smt2
+     6832:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_16.smt2
+     6866:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_17.smt2
+     6873:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_18.smt2
+     6851:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_19.smt2
+     6888:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_20.smt2
+     6841:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_21.smt2
+     6778:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_22.smt2
+     6823:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_23.smt2
+     6809:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_24.smt2
+     6820:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_25.smt2
+     6814:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_26.smt2
+     6908:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_27.smt2
+     6826:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_28.smt2
+     6860:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_30_0900_10_29.smt2
+     6376:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_10.smt2
+     6437:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_13.smt2
+     6551:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_18.smt2
+     6427:17    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_0800_10_23.smt2
+     7727:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_10.smt2
+     7767:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_11.smt2
+     7797:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_12.smt2
+     7793:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_13.smt2
+     7827:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_14.smt2
+     7764:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_15.smt2
+     7765:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_16.smt2
+     7810:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_17.smt2
+     7916:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_18.smt2
+     7842:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_19.smt2
+     7775:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_20.smt2
+     7728:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_21.smt2
+     7815:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_22.smt2
+     7784:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_23.smt2
+     7750:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_24.smt2
+     7705:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_25.smt2
+     7833:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_26.smt2
+     7856:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_27.smt2
+     7759:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_28.smt2
+     7748:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1000_10_29.smt2
+     9080:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_10.smt2
+     9132:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_11.smt2
+     9150:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_12.smt2
+     9157:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_13.smt2
+     9178:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_14.smt2
+     9099:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_15.smt2
+     9127:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_16.smt2
+     9167:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_17.smt2
+     9273:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_18.smt2
+     9201:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_19.smt2
+     9113:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_20.smt2
+     9085:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_21.smt2
+     9183:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_22.smt2
+     9131:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_23.smt2
+     9116:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_24.smt2
+     9058:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_25.smt2
+     9192:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_26.smt2
+     9206:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_27.smt2
+     9110:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_28.smt2
+     9107:18    QF_UFLRA/mathsat/RandomCoupled/pb_real_40_1200_10_29.smt2
+     3138:17    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_06.smt2
+     3288:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_09.smt2
+     3291:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_13.smt2
+     3344:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_18.smt2
+     3276:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_21.smt2
+     3227:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_24.smt2
+     3236:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_27.smt2
+     3206:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_28.smt2
+     3161:17    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_36.smt2
+     3231:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_45.smt2
+     3299:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_50.smt2
+     3250:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_58.smt2
+     3192:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_61.smt2
+     3197:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_67.smt2
+     3148:17    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_71.smt2
+     3343:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_60_45_73.smt2
+     4012:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_00.smt2
+     3851:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_01.smt2
+     4072:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_02.smt2
+     3897:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_03.smt2
+     4033:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_04.smt2
+     4030:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_05.smt2
+     3947:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_06.smt2
+     3912:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_07.smt2
+     4031:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_08.smt2
+     3795:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_09.smt2
+     3962:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_10.smt2
+     4138:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_11.smt2
+     3980:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_12.smt2
+     3935:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_13.smt2
+     4014:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_14.smt2
+     3915:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_15.smt2
+     3947:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_16.smt2
+     3972:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_17.smt2
+     4046:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_18.smt2
+     3944:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_19.smt2
+     3991:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_20.smt2
+     3982:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_21.smt2
+     3980:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_22.smt2
+     3860:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_23.smt2
+     3986:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_24.smt2
+     4033:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_25.smt2
+     3955:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_26.smt2
+     4030:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_27.smt2
+     3958:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_28.smt2
+     4023:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_29.smt2
+     4066:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_30.smt2
+     3936:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_31.smt2
+     4134:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_32.smt2
+     4025:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_33.smt2
+     4026:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_34.smt2
+     4003:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_35.smt2
+     3863:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_36.smt2
+     3954:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_37.smt2
+     4039:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_38.smt2
+     3951:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_39.smt2
+     4042:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_40.smt2
+     3885:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_41.smt2
+     3871:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_42.smt2
+     3987:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_43.smt2
+     4094:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_44.smt2
+     4004:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_45.smt2
+     4048:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_46.smt2
+     3951:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_47.smt2
+     3929:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_48.smt2
+     3983:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_49.smt2
+     4042:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_50.smt2
+     4030:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_51.smt2
+     3961:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_52.smt2
+     3973:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_53.smt2
+     3995:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_54.smt2
+     4074:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_55.smt2
+     3990:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_56.smt2
+     3940:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_57.smt2
+     3988:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_58.smt2
+     3962:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_59.smt2
+     4008:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_60.smt2
+     4035:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_61.smt2
+     4038:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_62.smt2
+     4067:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_63.smt2
+     4091:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_64.smt2
+     4079:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_65.smt2
+     3818:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_66.smt2
+     3827:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_67.smt2
+     3968:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_68.smt2
+     3938:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_69.smt2
+     3962:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_70.smt2
+     4027:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_71.smt2
+     3995:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_72.smt2
+     4018:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_73.smt2
+     4035:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_74.smt2
+     3981:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_75.smt2
+     3940:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_76.smt2
+     4012:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_77.smt2
+     4087:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_78.smt2
+     3981:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_79.smt2
+     3954:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_80.smt2
+     3983:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_81.smt2
+     4109:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_82.smt2
+     4048:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_83.smt2
+     3966:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_84.smt2
+     3882:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_85.smt2
+     4068:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_86.smt2
+     3863:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_87.smt2
+     3887:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_88.smt2
+     4089:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_89.smt2
+     4038:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_90.smt2
+     3986:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_91.smt2
+     3984:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_92.smt2
+     3990:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_93.smt2
+     3964:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_94.smt2
+     3987:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_95.smt2
+     3860:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_96.smt2
+     4028:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_97.smt2
+     3977:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_98.smt2
+     3955:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_30_75_45_99.smt2
+     4363:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_01.smt2
+     4306:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_19.smt2
+     4320:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_24.smt2
+     4278:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_33.smt2
+     4347:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_43.smt2
+     4316:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_57.smt2
+     4205:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_67.smt2
+     4412:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_73.smt2
+     4335:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_40_80_60_81.smt2
+     5456:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_07.smt2
+     5315:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_23.smt2
+     5486:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_35.smt2
+     5383:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_48.smt2
+     5540:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_58.smt2
+     5496:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_61.smt2
+     5268:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_68.smt2
+     5295:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_100_30_71.smt2
+     7745:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_00.smt2
+     7812:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_01.smt2
+     7823:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_02.smt2
+     7846:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_03.smt2
+     8009:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_04.smt2
+     7877:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_05.smt2
+     7879:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_06.smt2
+     7899:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_07.smt2
+     7990:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_08.smt2
+     7845:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_09.smt2
+     8001:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_10.smt2
+     7884:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_11.smt2
+     7963:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_12.smt2
+     7864:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_13.smt2
+     7826:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_14.smt2
+     7804:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_15.smt2
+     7922:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_16.smt2
+     7861:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_17.smt2
+     7823:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_18.smt2
+     7982:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_19.smt2
+     7848:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_20.smt2
+     7966:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_21.smt2
+     7728:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_22.smt2
+     7795:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_23.smt2
+     7854:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_24.smt2
+     7923:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_25.smt2
+     8021:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_26.smt2
+     7941:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_27.smt2
+     7610:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_28.smt2
+     8088:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_29.smt2
+     7939:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_30.smt2
+     8071:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_31.smt2
+     7927:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_32.smt2
+     7791:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_33.smt2
+     7992:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_34.smt2
+     7969:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_35.smt2
+     7796:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_36.smt2
+     7943:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_37.smt2
+     7763:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_38.smt2
+     7886:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_39.smt2
+     7926:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_40.smt2
+     8022:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_41.smt2
+     7866:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_42.smt2
+     7944:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_43.smt2
+     7835:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_44.smt2
+     7911:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_45.smt2
+     7938:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_46.smt2
+     7796:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_47.smt2
+     7722:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_48.smt2
+     7758:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_49.smt2
+     7945:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_50.smt2
+     7888:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_51.smt2
+     7988:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_52.smt2
+     7951:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_53.smt2
+     7713:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_54.smt2
+     7866:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_55.smt2
+     7918:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_56.smt2
+     7926:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_57.smt2
+     8012:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_58.smt2
+     7850:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_59.smt2
+     7921:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_60.smt2
+     8181:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_61.smt2
+     7906:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_62.smt2
+     7910:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_63.smt2
+     8078:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_64.smt2
+     7961:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_65.smt2
+     7891:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_66.smt2
+     7776:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_67.smt2
+     7850:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_68.smt2
+     7831:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_69.smt2
+     7876:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_70.smt2
+     7934:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_71.smt2
+     7647:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_72.smt2
+     7881:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_73.smt2
+     7902:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_74.smt2
+     8017:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_75.smt2
+     7860:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_76.smt2
+     7950:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_77.smt2
+     7949:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_78.smt2
+     7993:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_79.smt2
+     8040:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_80.smt2
+     7908:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_81.smt2
+     7745:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_82.smt2
+     7891:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_83.smt2
+     7791:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_84.smt2
+     7942:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_85.smt2
+     7923:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_86.smt2
+     7794:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_87.smt2
+     7756:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_88.smt2
+     7901:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_89.smt2
+     8005:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_90.smt2
+     7925:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_91.smt2
+     8005:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_92.smt2
+     7930:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_93.smt2
+     7829:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_94.smt2
+     8030:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_95.smt2
+     7889:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_96.smt2
+     7860:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_97.smt2
+     7860:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_98.smt2
+     7872:18    QF_UFLRA/mathsat/RandomDecoupled/pb_real_50_150_30_99.smt2
 
 The 3 that hit the same parse error but still do not check valid
 ------------------------------------------------------
