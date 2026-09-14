@@ -675,3 +675,109 @@ Test suite running. Summary of where this landed:
 | `uf.828950` (sledgehammer) | 900 s timeout | 2 s valid | 2.21 s valid |
 
 I was wrong twice before getting here, and it is worth being explicit about it: my first diagnosis blamed the closed-term scan in `6734243`, and the patch I built for it changed nothing. That patch is not in the tree. Bisecting the six commits located the real cause in `e9c32bf` — the commit whose arena half I had explicitly ruled out because these proofs have no binders. The binder half was indeed inert; the `:named` half was not.
+
+## Turn: 2026-09-13 21:23:33 (session 6cc35fc7)
+
+Fix committed as `ee8502b`, and the re-smoke is staged.
+
+## What went wrong, and what actually caused it
+
+The `and` optimization was never the problem — it delivered exactly what you measured (`and` 18.77 → 1.69 ms/step on veriT, 3.44 → 0.81 on cvc5), and `valid → holey` was 0 on both solvers.
+
+The 75 lost proofs came from **`e9c32bf`**, the parser commit. It gives every `:named` term an eagerly computed set of the atoms it can mention, by walking the term's whole S-expression — including the nested named terms inside it, whose own sets already cover them. cvc5 emits an `and` assertion as a left-nested chain of named terms, **1,820 deep on one line** of `LD_ST_neg.2step`, so every level re-walked everything below it. Quadratic, in *parsing*, before a single step runs — which is why all 75 died at `steps=0`, why they were the large proofs, and why the same benchmarks failed under both solvers.
+
+I should flag that I reached this the slow way. My first diagnosis blamed the closed-term scan in `6734243`; I built that fix and it changed nothing, so it is not in the tree. I had also explicitly ruled out `e9c32bf` on the grounds that these proofs have no binders — true of its arena half, and irrelevant to its `:named` half. Bisecting the six commits settled it in four builds.
+
+The fix makes the atom sets lazy (the closed test short-circuits on an empty scope, so a proof with no binder never builds one) and stops `atomsOf` descending into nested `:named` subterms.
+
+| | round-six source | HEAD | with the fix |
+|---|---|---|---|
+| `LD_ST_neg.2step`, cvc5 proof | 6.87 s valid | >300 s timeout | **6.30 s valid** |
+| `LD_ST_neg.2step`, veriT proof | — | >600 s timeout | **40.9 s valid** |
+| `uf.823377` sledgehammer | 900 s timeout | 2 s valid | **2.29 s valid** |
+| `uf.828950` sledgehammer | 900 s timeout | 2 s valid | **2.21 s valid** |
+
+The last two are the guard: they are the proofs `e9c32bf` was written for, both quantifier-heavy (536 and 960 `forall`s), and they keep its full win. `lake test`: 142 passing, `Normalize.expected` unchanged.
+
+## Waiting on you
+
+```
+cluster-approve
+```
+
+for the redeploy — it uploads the `ee8502b` oleans over `runs/alethe-lean7` and the second smoke driver, leaving carcara, cvc5, veriT, the sets and `run-arms.sh` byte-identical, so this pass differs from the first by exactly one commit. It finishes with a head-node run of both solvers on two benchmarks.
+
+I'm re-smoking rather than going straight to the full round: the fix is verified on four proofs, the sample checks it on 2,340, and it costs a tenth of what the full round would if something else is hiding. New working dirs `cvc5-7bsmoke` / `verit-7bsmoke`, so neither round six nor the first pass is overwritten. The dry run and submit will each need their own approval after this.
+
+## Turn: 2026-09-13 22:49:35 (session 6cc35fc7)
+
+The fix was already committed as `ee8502b` earlier this turn, and the redeploy has now run.
+
+**Redeploy complete.** The `ee8502b` oleans are on `runs/alethe-lean7`. Everything else is untouched and verified unchanged: `run-arms.sh` md5 `932f2d82…`, `rewrites.eo` md5 `9233775f…`, both matching round six, plus cvc5 and veriT. So this pass differs from the first smoke by exactly one commit. The head-node check ran both solvers on a QF_UF and a QF_LIA benchmark — all four arms valid, no trusted steps.
+
+**Waiting on you:**
+
+```
+cluster-approve
+```
+
+for the dry run. It submits nothing — it prints the generated SLURM configuration for both solvers and writes the full output to `scripts/alean7bs-dryrun.log` on scratch, then summarizes from the file rather than piping the driver through `head` (which truncated a dry run earlier in this work).
+
+Configuration it will show: octa, `-j 8`, wall 3000 s, 12000 MB, 1 cpu, the twelve `s10_*` sample sets, into new working dirs `cvc5-7bsmoke` and `verit-7bsmoke` — so neither round six nor the first smoke pass is overwritten, and I can compare against both.
+
+One note on the staging: my first attempt to propose this was itself blocked, because the guard matches any command string containing a `submit*.sh` name and my `cluster-propose` line quoted one. It recorded the proposal line rather than the command I meant. I re-staged through `cluster-propose`'s stdin form, so what is pending now is the dry-run command itself — worth knowing in case you see a stale entry.
+
+## Turn: 2026-09-13 22:57:17 (session 6cc35fc7)
+
+**Dry run passed**, exit 0:
+
+| | cvc5 | veriT |
+|---|---|---|
+| working dir | `cvc5-7bsmoke` | `verit-7bsmoke` |
+| partition | octa | octa |
+| wall / memory / cpus | 3000 s / 12000 MB / 1 | 3000 s / 12000 MB / 1 |
+| jobs per node | 8 | 8 |
+| sample sets | 12 | 12 |
+
+No errors, and no `Submitted` line — nothing was queued.
+
+**Waiting on you:**
+
+```
+cluster-approve
+```
+
+for the submission. It starts both jobs inside a detached tmux named `alean7bs`, waits 45 seconds, then reports the count of submitted arrays, the aggregator lines and the queue. About 2,340 benchmarks per solver.
+
+When it lands I'll run the same two analyses as before, but paired three ways: against round six to confirm the residue is still cleared, and against the first smoke pass to confirm the 75 regressions are gone and nothing new has taken their place. Then the full round.
+
+## Turn: 2026-09-13 21:40 (session 6cc35fc7)
+
+The fix is committed as `ee8502b` and the second smoke pass is running.
+
+**Redeploy**: the `ee8502b` oleans are on `runs/alethe-lean7`. Nothing else moved —
+`run-arms.sh` md5 `932f2d82…` and `rewrites.eo` md5 `9233775f…` both still match
+round six, as do `bin/cvc5` and `bin/veriT`. So this pass differs from the first
+smoke by exactly one commit, which is what makes the comparison worth anything.
+Head-node check: both solvers on a QF_UF and a QF_LIA benchmark, all four arms
+valid, no trusted steps.
+
+**Dry run**: exit 0, both halves present, octa / wall 3000 s / 12000 MB / 1 cpu /
+8 per node, twelve `s10_*` sets each, into `cvc5-7bsmoke` and `verit-7bsmoke`.
+New working dirs, so neither round six nor the first pass is overwritten.
+
+**Submitted** inside tmux `alean7bs`: 24 arrays, both aggregators up (1613407,
+1613439), 2,339 cvc5 and 2,340 veriT tasks.
+
+**A process note worth keeping.** My first `cluster-propose` for the dry run was
+itself blocked, because the guard matches any command string containing a
+`submit*.sh` name and the proposal line quoted one — so it recorded the proposal
+line instead of the command I meant. Staging through `cluster-propose`'s stdin
+form (`cluster-propose -m '…' < file`, with the command written to the file by
+the Write tool) puts the right string in front of you. That is the fifth time
+this guard has caught a purely local command in this work; the stdin form is the
+answer, not reshaping the command.
+
+**When it lands** I will pair three ways: against round six, to confirm the
+residue is still cleared, and against the first smoke pass, to confirm the 75
+regressions are gone and that nothing new replaced them. Then the full round.
