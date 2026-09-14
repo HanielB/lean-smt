@@ -844,3 +844,26 @@ no soundness question, but it is a genuine memory-bound case for the report.
 **Staged**: upload the full round-seven driver (header updated; the submit call
 itself unchanged) and dry-run it. Twelve `unsat_*` sets, 25,200 benchmarks per
 solver, into `cvc5-7` and `verit-7`.
+
+## Turn: 2026-09-14 01:55 (session 6cc35fc7)
+
+Full round seven is submitted and running.
+
+| item | value |
+|---|---|
+| tmux | `alean7` |
+| arrays | 24, twelve per solver |
+| aggregators | 3196142, 3196174 — both up |
+| tasks | 23,327 cvc5 (200 already running), 23,328 veriT |
+| working dirs | `exp/results/alethe-lean/cvc5-7`, `verit-7` |
+| limits | octa, 8 per node, wall 3000 s, 12000 MB, 1 cpu |
+
+Toolchain: carcara `29a8e966`, lean-smt oleans `ee8502b`. cvc5, veriT, the
+benchmark sets, `rewrites.eo` and `run-arms.sh` are byte-identical to round six,
+so the rounds stay directly comparable. Dry run was clean and the uploaded driver
+matches the local copy (md5 `a3dce29b…`).
+
+One correction to my own proposal note: I described the round as 25,200
+benchmarks per solver. That is the catalog's count across all fourteen logics;
+these twelve give **23,328**, which is exactly what round six ran and what the
+queue shows.
