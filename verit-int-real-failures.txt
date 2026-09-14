@@ -13,31 +13,46 @@ fail for unrelated reasons.
 What veriT emits
 ------------------------------------------------------
 
-One rule, one operator, one shape. Every rejected position is the `=` of a
-`unary_minus_simplify` step:
+The operator is always `=`. Across the sample, every Int/Real mixing in these
+proofs sits at the arguments of an equality -- not one `distinct`, not one `ite`
+branch, not one uninterpreted-function argument, though the fix relaxed all
+three positions.
 
-    (! (- 1.0) :named @p_1)                                   in an assumption
-    ...
-    (step t28 (cl (= @p_1 (- 1))) :rule unary_minus_simplify)
+The origin is `unary_minus_simplify`. veriT names `(- 100.0)` and then prints the
+simplified literal without its decimal point:
 
-`@p_1` names `(- 1.0)`, which is Real. veriT prints the simplified right-hand
-side as `(- 1)` -- unary minus on an *integer* literal, so Int. The `=` therefore
-has Real on one side and Int on the other. `(- 1)` itself is fine: `-` is one of
-the operators whose argument sorts are fixed and numeric, and those already
-honoured `--allow-int-real-subtyping`. It is the `=` above it that was rejected.
+    (step t4384 (cl (= @p_2 (- 100))) :rule unary_minus_simplify)
 
-Measured on a stratified sample of 36 proofs, six per family across all nine
-families, regenerated with the runner's own veriT invocation:
+`@p_2` is Real; `(- 100)` is unary minus on an *integer* literal, so Int. `(- 100)`
+on its own is fine -- `-` has fixed numeric argument sorts and already honoured
+`--allow-int-real-subtyping`. It is the `=` above it that was rejected.
 
-  - the position Carcara reported is the `=` of a `unary_minus_simplify` step in
-    36 of 36. No other operator and no other rule appears.
-  - the parser stops at its first error, so that alone would only characterise
-    the *first* offending term. Scanning every step of those 36 proofs for the
-    same shape -- an integer literal equated with a named real-sorted term --
-    finds 221 occurrences, again all `unary_minus_simplify` and no other rule.
+It does not stay there. The Int-sorted term is carried into whatever steps take
+that one as a premise, congruence first of all:
 
-So on this population the defect is reached through exactly one of the three
-positions the fix relaxed.
+    (step t4385 (cl (= @p_10477 (! (= tmp64 (- 100)) :named @p_10478)))
+                :rule cong :premises (t4384))
+
+with `tmp64` declared Real. So `cong` inherits the defect rather than causing it.
+
+Measured over 35 of a stratified 36-proof sample (six per family, all nine
+families; one 224 MB proof too large to scan), by inferring a sort for every
+subterm and flagging every polymorphic position whose arguments disagree:
+
+    occurrences   proofs   operator   rule
+          707     11/35      =        cong
+          220     35/35      =        unary_minus_simplify
+            3      3/35      =        la_generic
+
+`unary_minus_simplify` is the only rule present in *every* proof, and it is where
+the parser stops in all 36: resolving the file:line:column each round-four task
+reported puts the first rejected position in a `unary_minus_simplify` step, 36 of
+36. `cong` has the larger raw count but occurs in under a third of the proofs and
+always downstream of a `unary_minus_simplify` premise. `la_generic` shows the
+defect at its barest: `(= 1.0 (- 1))`.
+
+So: one operator, one origin, and two rules that inherit it. Fixing how veriT
+prints that literal would remove all three.
 
 
 What Carcara fixed (commit 92d8a42f, `parser: honour Int/Real subtyping at the
