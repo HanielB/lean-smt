@@ -556,9 +556,10 @@ are merely required to agree --- the arguments of \texttt{=} and
 uninterpreted function. \verit writes an integer literal on one side of an
 equality with a real-sorted term, so those proofs were rejected before
 checking began with \emph{sort error: expected `Real', got `Int'}, which is
-why the affected benchmarks are exactly the real-arithmetic families (409 in
-QF\_UFLRA's \texttt{mathsat}, 95 and 85 in QF\_LRA's \texttt{meti-tarski} and
-\texttt{LassoRanker}, 47 in QF\_RDL's \texttt{sal}). The same defect had
+why the affected benchmarks are exactly the real-arithmetic families: 412 in
+QF\_UFLRA (409 \texttt{mathsat}, 3 \texttt{FFT}), 189 in QF\_LRA (95
+\texttt{meti-tarski}, 84 \texttt{LassoRanker}, 9 \texttt{miplib}) and 49 in
+QF\_RDL (47 \texttt{sal}). The same defect had
 appeared in an earlier three-logic round, on 194 QF\_LRA proofs, where it had
 been mistaken for \rulename{lia\_generic} residue. The fix is confined
 to those three polymorphic positions, so that \texttt{(div 1.0 2.0)} is still
