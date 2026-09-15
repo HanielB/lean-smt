@@ -426,3 +426,298 @@ old path checks. A trace of `res_tautology` shows `check_sound` closing all
 — needs a proposal and Haniel's approval; and `smt.alethe.checkInner`
 still re-checks reflective terms with the elaborator if it is turned on
 (default off) — harmless, unmeasured. Stage 2 not started.
+
+## Turn: 2026-09-15 14:10:33 (session 6cc35fc7)
+
+Stage 1 is in, commit `9cdb6e0`, with the log in `675f0c8`. One note: `RESOLUTION-PLAN.md` shows as modified in the working tree; that is your edit, and I left it alone.
+
+**What was built.** `Smt/Reconstruct/Prop/ResNorm.lean`, in the shape of `AciNorm`: a literal is a `Nat`, a clause is a `List Nat` whose denotation unfolds definitionally to the proposition the checker states, and a bitset on which each link of the chain is four accelerated operations. The pivots are hints, so a wrong one fails only at the final containment, and the tautological premise needs no guard. `check_sound` is applied as a term with both `Bool` conditions closed by `Eq.refl true`. It depends on `propext` and `Quot.sound` only, from the core `Nat` lemmas; no `Classical`. The reifier walks the right `Or` spine, so the `or` rule falls out, and declines a literal under two negations, in which case the old path takes the step.
+
+**Wiring.** `reconstructClausal` tries the reflective path first for resolution and the four containment rules when `smt.alethe.reflect` is set, default off. `smt.alethe.reflectMinPremises` gates resolution by premise count; it stays at 0, because the small steps showed no loss.
+
+**Measured on the profiled proof** (loaded machine, compare within the pair):
+
+| | off | on |
+|---|---|---|
+| resolution, 670 steps | 2.08 s | 0.98 s |
+| `t6906`, 230 premises | 1.147 s | 0.079 s |
+| 669 small steps, median | 1.15 ms | 1.12 ms |
+
+That is the plan's prediction exactly: an order of magnitude on the long chain, nothing on the per-step floor.
+
+**Verification.** `lake test` passes 149 with the option off: the 144 existing tests, the unit test with every chain shape plus two required failures, and four Alethe tests (the 230-premise unit chain, a 1000-literal clause, a tautological premise, and a stacked negation that must fall back). Every one of the 47 Alethe tests was then re-run with the option on from the command line, and none changed its output. A trace on the tautology test shows `check_sound` closing all five clausal steps.
+
+**Left from the plan's list.** The cluster round needs a proposal and your approval. Stage 2 is not started.
+
+## Turn: 2026-09-15 18:44:06 (session 6cc35fc7)
+
+No. Two things are fixed and verified locally, and three known problems are still open, one of which I'd want closed before the round.
+
+**Fixed since round seven**
+- The 8 trusted resolution steps (2 cvc5 proofs, 6 veriT): Carcara `69c92a64`, all eight check valid locally. The cluster's `runs/alethe-lean7` still carries `29a8e966`, so the round needs the new binary deployed.
+- The reflective clause checker is in, but opt-in. The round has to set `smt.alethe.reflect true` in the runner's check file to measure it.
+
+**Open**
+- **The two cvc5 parse regressions**, `QF_LIA/…/ConcurrencySafety-Main/30_Function` and `32_pthread5`. Valid in round six at 769 s and 526 s, timeouts in round seven, both stuck in parsing the same elaborated proof (617 and 291 steps, raw proofs of 48 MB and 30 MB). Round six already spent 284 s and 237 s parsing them, so the parser was slow on that shape before `e9c32bf`/`ee8502b` and is now slower. Not investigated. This is the one I'd chase first: it is a real regression in code that changed this week, it is on a shape the smoke sample did not contain, and the same shape may sit inside other large-term proofs that timed out anyway.
+- **The 14 veriT memory exceptions** (QF_IDL `asp` and `parity`, QF_LIA `Dartagnan`). Round six's "one step too large" explanation was retracted after 34 of the 49 checked in round seven; the 14 that remain have no diagnosis. The one veriT hole at `QF_IDL/parity/06.200` is the same family, a resolution step whose kernel check hit the cap, and the reflective checker may or may not cover it. Unknown.
+- **The 15 cvc5 `ho_cong` proofs** (13 `incrementalScheduling`, 2 Certora). A missing feature, not a bug: `define-fun` bound as a function rather than expanded. Deferred deliberately.
+
+**Not ours**
+- veriT's 27 `and_simplify` rejections and 1 `minus_simplify` are solver-side shapes Carcara refuses.
+- One cvc5 crash (`solver_rc=134`) on a round-seven benchmark.
+- The 40 former `Decidable` failures are now ordinary timeouts on 60k-step proofs.
+
+If you want the round to be a clean measurement of the two changes, the parse regression is the only item whose fix could move numbers in the same rows. I can start on it now.
+
+## Turn: 2026-09-15 18:49:19 (session 5c039b91)
+
+I'm not suggesting that, and I can't find such a suggestion anywhere in this session or the repo.
+
+**What I checked.** Nothing in this conversation mentions a refactor. The two plan files and both conversation logs reference `Smt/Alethe/Reconstruct.lean` only three times, and none of them proposes changing it:
+
+- The resolution plan cites the batch re-check logic at `Smt/Alethe/Reconstruct.lean:356` as a reason Stage 2 must stay behind a flag with the fallback intact.
+- It cites the batch sizing at `Smt/Alethe/Reconstruct.lean:305` as something to re-tune after reflective steps shrink the kernel batches. That is a parameter adjustment, not a refactor.
+- The risks section explicitly says to leave the cvc5 resolution path in `Smt/Reconstruct/Prop.lean` alone.
+
+The only pending edit to the plan file is a table reformat. The stage 1 checker was committed as a new module next to `AciNorm.lean`, with a small wiring change in `Smt/Alethe/Clause.lean`, so the recorded design keeps the reconstructor untouched.
+
+If you saw the suggestion in another window, it may have come from the concurrent session that was running carcara jobs out of `~/carcara/wt-tiago` yesterday. If you paste the text you're looking at, I can tell you whether it holds up against the plan and what it would actually touch.
+
+## Turn: 2026-09-15 18:49:39 (session 5c039b91)
+
+Nothing further is needed on my side. The completion was generated by the autocomplete feature, not by me, and the plan does not call for touching the reconstructor beyond re-tuning its batch size after reflection is enabled.
+
+## Turn: 2026-09-15 18:56:00 (session 5c039b91)
+
+The raw numbers are in hand. Two background analyses are still running: one classifying every hunk in the pre-existing reconstruction files, the other mapping each Alethe rule to the library component that proves it. I'll write the report once both return.
+
+## Turn: 2026-09-15 19:20:11 (session 6cc35fc7)
+
+Three threads. I'll start by pulling what round seven recorded for each group and checking which benchmarks I have locally, then reproduce each.
+
+## Turn: 2026-09-15 19:20:11 (session 6cc35fc7)
+
+No response requested.
+
+## Turn: 2026-09-15 19:20:11 (session 6cc35fc7)
+
+The memory timeline is being re-collected on the right process (the first sampler tracked the `lake` wrapper), the test suite is running behind the parser rebuild, and the 30_Function check is in its reconstruction phase. I'll report when those three land.
+
+## Turn: 2026-09-15 19:21:26 (session 6cc35fc7)
+
+All three runs are still in progress: the test suite (its tally prints at the end), the sampled memory run, and the 30_Function check, which is past parsing and realization and in reconstruction. Nothing to do until they land.
+
+## Turn: 2026-09-15 19:21:29 (session 5c039b91)
+
+I have everything on my side. The remaining inputs are the two resumed agents' reports, which will arrive as notifications. I'll assemble the report as soon as they land.
+
+## Turn: 2026-09-15 19:24:04 (session 5c039b91)
+
+One of the two analyses is back. The other, the rule-by-rule reuse inventory, is still running. I'll write the report once it arrives.
+
+## Turn: 2026-09-15 19:25:56 (session 6cc35fc7)
+
+The every-step run confirms the failing step is `t19047`, the `cong` with 8,449 premises. Two measurements are queued to split reconstruction from kernel and to get the scaling on a synthetic n-ary `cong`; the 30_Function check is still reconstructing its assertions.
+
+## Turn: 2026-09-15 19:26:05 (session 5c039b91)
+
+Both analyses are in. Here is the report.
+
+Your three-part picture is right in outline, with one addition: a fourth bucket of new verified modules that sit inside the existing library rather than under the Alethe directory, and that both the cvc5 path and the Alethe path now use. The branch has 104 commits over the merge base 76b4eea.
+
+## 1. Size of each part
+
+All counts are lines of Lean unless marked. The pre-existing lemma libraries, meaning every `Lemmas.lean`, `Rewrites.lean` and `Prop/Core.lean` under the reconstruction tree, are byte-identical to main.
+
+| Part | Files | Lines |
+|---|---|---|
+| Alethe parser: `Syntax`, `Parser`, `Realize` | 3 new | 946 |
+| Alethe rule reconstruction: `Basic`, `Clause`, `Prop`, `Arith`, `UF`, `Quant`, `Polyeq`, `Lemmas`, `Rare`, `Rare/Basic` | 10 new | 3,190 |
+| Generated RARE table `Rare/Rules.lean`, plus its generator and input | 1 new + `gen.py` 445 + `rewrites.eo` 513 | 1,380 |
+| Driver, frontend, command, tactic: `Reconstruct`, `Frontend`, `Command`, `Tactic`, `Alethe.lean` | 5 new | 1,381 |
+| New verified modules in the existing tree: `Prop/AciNorm`, `Prop/Proj`, `Prop/ResNorm` | 3 new | 1,097 |
+| Changes to pre-existing library files | 11 modified | +1,361 / −791 |
+| Registration: `Smt.lean`, `Attribute.lean`, `Options.lean` | 3 modified | +8 |
+| Tests: `Test/Alethe` | 47 test files, 92 problem and proof files | 250 Lean, 15,026 proof text |
+| Unit tests for the new normalizers | 2 new | 126 |
+| Scripts: `check-alethe.sh`, `setup-alethe.sh`, `rule-boxplots.py` | 3 new | 636 |
+| Report and notes under `docs-alethe/` | tex 1,246, md 606, plus PDFs and CSVs | |
+
+**The parser** is self-contained. `Syntax.lean` defines the proof syntax parametric in the term type, with steps, anchors, subproof commands, and a hash-consed arena of S-expression nodes. `Parser.lean` turns S-expressions into a proof over arena node ids, eliminating `let`, `:named`, `define-fun` and anchor bindings through one environment. `Realize.lean` turns the arena proof into a proof over cvc5 terms by feeding text to cvc5's own SMT-LIB parser, sharing closed subterms through `:named`. That last design choice is the reason the rule reconstruction could reuse the library: every Alethe step arrives as cvc5 terms, so the existing term and sort reconstructors apply unchanged. There is no separate term AST.
+
+## 2. What was touched in the existing library, and why
+
+The changes to pre-existing files fall into four kinds. Only the first kind is optimization proper.
+
+**Performance optimizations of existing cvc5 routines.** These change the proof terms the cvc5 path produces, never its conclusions.
+
+- `Smt/Reconstruct/Int/Polynorm.lean`, `Rat/Polynorm.lean`, `Real/Polynorm.lean`: the verified polynomial normalizer now collects monomials in one pass and sorts them with one bottom-up merge sort, instead of folding through a sorted insertion that cost the kernel cubic time. Negation, subtraction and division by a constant are absorbed into a threaded multiplier. The definitions and their denotation lemmas were rewritten and reproved; the exported soundness theorem is unchanged in statement and proof, and nothing was sorried. Commit 7258b45.
+- Same three files: the `polyNorm` tactic now closes the goal with a decided equality rather than an `Eq.refl` between two normalizer applications, which forces the kernel to evaluate instead of unfolding both sides in lockstep. This is a meta-level change only. Commit 711e8e7.
+- `Smt/Reconstruct/Prop.lean`: the cvc5 rules `AND_ELIM`, `NOT_OR_ELIM`, `CNF_AND_POS`, `CNF_AND_NEG`, `CNF_OR_POS`, `CNF_OR_NEG` project structurally out of the right-nested conjunction using the new `Prop/Proj.lean`, instead of indexing a `List Prop` with a decided bound. Commit 008ac35.
+- `Smt/Reconstruct/Builtin.lean`: `ACI_NORM` on an and/or layer goes through the new reflective `AciNorm` normalizer, with the old AC-rewriting tactic kept as fallback. Commit 28bb705.
+- `Smt/Reconstruct.lean`: `synthDecidableInstance` guards the instance search and decomposes compound conditions through not, and, or, iff before falling back to a classical instance. The reconstruction state gains a cache of closed terms valid across binder scopes, enabled only when a driver sets a base local context. Both serve the Alethe driver but sit on the shared path.
+
+**Generalizations so the Alethe checker can call existing reconstructors.** Pure refactors with no behavior change on the cvc5 path, almost all in the first commit c69e4d5.
+
+- A new `RewriteStep` record in `Smt/Reconstruct.lean` decouples rewrite steps from `cvc5.Proof`. Every per-theory `reconstructRewrite` in `Builtin`, `Int`, `Prop`, `Quant`, `Rat` and `UF` was retyped to take it, and cvc5 call sites wrap their proof with `RewriteStep.ofProof`.
+- `Prop.getResolutionResult` and `Prop.reconstructResolution` take the pivot polarity as a `Bool` instead of a cvc5 term. `Prop.isNotOf` became public.
+- `Int` and `Rat`: `reconstructArithPolyNormRel` takes terms instead of a proof object, and the term-level half of the mult-sign reconstruction was factored out as `reconstructMulSignTerms`. Two small readers, `Int.intValue` and `Rat.constValue`, accept Alethe's spelling of coefficients such as a negated literal or a quotient of literals.
+- `addTrustWith` in `Smt/Reconstruct.lean` lets a step be trusted with a custom trace message.
+
+**Bug fixes found through the Alethe evaluation.**
+
+- `Smt/Reconstruct/Quant.lean`: `QUANT_UNUSED_VARS` was wrong when a binder prefix repeats a variable or reorders, and when the whole prefix is dropped. Commits 3ca2f21 and 4d88b28.
+- `Int.lean` and `Rat.lean`: relations with one Int side and one Real side were claimed by the Int handler and reconstructed ill-sorted. The Int handler now declines them and the Rat handler casts through a new `ratArg` helper.
+- `UF/Congruence.lean`: the left- and right-associative congruence helpers replaced panicking `get!` calls with real errors. Commit ad066ae.
+
+**New verified modules placed in the existing tree.** These are the fourth bucket. `Prop/Proj.lean` holds the projection chains and CNF builders. `Prop/AciNorm.lean` is a reflective normalizer for one and/or layer as a bitset and for xor as parity, in the style of the polynomial normalizer. `Prop/ResNorm.lean` is a reflective checker for resolution chains and the containment rules, evaluated by the kernel in one pass and gated behind the option `smt.alethe.reflect`. Only `Proj` and `AciNorm` are on the cvc5 path today.
+
+## 3. Reuse of the existing library in the Alethe rules
+
+The checker plugs into the library at three levels. At the substrate level it reuses `ReconstructM` with its context, state, caches and assumption handling, `reconstructTerm` and `reconstructSort` with the whole attribute-driven term and sort reconstructor set, `addThm`, `addTac` and `addTrust`, and the attribute framework, to which one attribute `alethe_rule_reconstruct` was added in three lines. The tactic reuses the entire `smt` preprocessing and query pipeline. At the rule level, the reuse is as follows. Every component named here existed on main unless marked new.
+
+**Clausal rules** in `Clause.lean`. Resolution and its variants call `Prop.reconstructResolution` and `Prop.getResolutionResult`, the largest single reuse in the checker. Weakening is `Prop.orN_append_left`. The fix-up that reconciles a computed clause with the stated one uses `Prop.eqResolve` and the AC tactic `Meta.AC.rewriteUnnormalizedTop` from `Builtin/AC.lean`. The reflective path, when enabled, uses the new `ResNorm`. Contraction and reordering rest on a new lemma.
+
+**Propositional rules** in `Prop.lean`. Of the 46 rules, 40 are direct applications of lemmas from `Prop/Lemmas.lean` and `Builtin/Lemmas.lean`: `notAnd`, `impliesElim`, `notImplies1`/`2`, `equivElim1`/`2`, `notEquivElim1`/`2`, `xorElim1`/`2`, `notXorElim1`/`2`, `iteElim1`/`2`, `notIteElim1`/`2`, and the CNF axiom family `cnfImpliesPos`, `cnfImpliesNeg1`/`2`, `cnfEquivPos1`/`2`, `cnfEquivNeg1`/`2`, `cnfXorPos1`/`2`, `cnfXorNeg1`/`2`, `cnfItePos1`/`2`, `cnfIteNeg1`/`2`. The and, not_or, and_pos, and_neg, or_pos and or_neg rules use the new projection builders from `Proj`. The rules with new code are bfun_elim, and_intro, and the quantifier cases of connective_def; true, false, not_not, the ite intros and the connective_def cases each have a small new lemma.
+
+**Arithmetic rules** in `Arith.lean`. The Farkas driver behind la_generic, la_tautology and bounded_farkas is new meta code, but it is built from existing lemmas and programs: the `sum_ub₁` to `sum_ub₉` lemmas, the `mul_pos_lt`, `mul_pos_le`, `mul_pos_eq` and `mul_neg_eq` lemmas in both Int and Rat, and the verified polynomial normalizers `polyNorm` and `nativePolyNorm` for Int and Rat to close the final residue. la_mult_pos and la_mult_neg dispatch to the 20 existing `mul_pos`/`mul_neg` lemmas by name. poly_simp is the polynomial normalizer directly. poly_simp_rel and la_mult_sign call the factored-out `reconstructArithPolyNormRel` and `reconstructMulSignTerms`. The new Farkas, disequality, totality and la_rw_eq lemmas are proved from existing `Rat.trichotomy₂`, `lt_eq_sub_lt_zero`, `le_eq_sub_le_zero` and the `*_of_sub_eq_*_int_left` family. Integer tightening, lia_generic and the constant-divisor case of div_intro use Lean core's omega.
+
+**Equality and rewriting rules** in `UF.lean`. cong, eq_congruent and eq_congruent_pred run on `UF.smtCongr` from `UF/Congruence.lean`. eq_symmetric uses `UF.eq_symm` and `Prop.impliesElim`. The refutation form of the clausal equality rules uses `Prop.notNotElim`. distinct_elim uses `collectPropsInAndChain` from `Util.lean` and the new projection chains. assoc_simp is the existing AC tactic. semilattice_simp and boolean_group_simp are the new `AciNorm`. evaluate uses `synthDecidableInstance` with new case-splitting helpers. trans, symm, not_symm, eq_transitive and the pair matching inside distinct_elim are new meta code.
+
+**RARE rewrites** in `Rare.lean` and the generated table. The generator reads Carcara's rule file and emits one theorem per rule, two for rules polymorphic over Int and Real. Of the 117 theorems, 45 are closed by lemmas from `Int/Rewrites.lean` and `Rat/Rewrites.lean`, 41 by lemmas from `Prop/Rewrites.lean`, 13 by `Builtin/Rewrites.lean` and `UF/Rewrites.lean`, 8 by `rfl`, 3 by core Int lemmas or an inline term, 2 by a short tactic proof, 1 by a new Alethe lemma, and 4 are sorried and reported as trusted, namely the two mult-tangent rules in both sorts. Six array rules have no statement because there is no array sort support. Every lemma cited from a `Rewrites.lean` file existed on main.
+
+**Quantifier rules** in `Quant.lean`. qnt_rm_unused over forall, qnt_join, miniscope_distribute, miniscope_split and miniscope_ite are handled by the existing `Quant.reconstructRewrite`, mapped onto the cvc5 rewrite rules `QUANT_UNUSED_VARS`, `QUANT_MERGE_PRENEX` and the three miniscope rules, with no new proof code. bind uses `Quant.exists_congr_eq` and core `forall_congr`. forall_inst uses `Prop.impliesElim`. onepoint uses the projection builders and `collectPropsInOrChain`. The anchor and binder machinery, let, sko_ex, sko_forall, onepoint's guard handling and qnt_rm_unused over exists are new, each with a small new lemma where a statement was needed.
+
+**Tally of new lemmas.** `Smt/Alethe/Lemmas.lean` holds 53 theorems. They cover the clausal shapes of Alethe conclusions, the Farkas and totality statements, Skolemization and one-point equalities, the qnt_simplify constants, and the three connective_def shapes. None duplicates a library lemma; most are thin wrappers over the existing Int and Rat lemmas.
+
+**Rules with no library reuse at all** are `polyeq` assumption matching in `Polyeq.lean`, the step-by-step kernel driver with batching and concurrency in `Reconstruct.lean`, and the anchor rules named above.
+
+If you want this as a shareable page for the paper's co-authors, I can publish it as an artifact.
+
+## Turn: 2026-09-15 19:32:44 (session 6cc35fc7)
+
+Three things are running now: the whole `cggmp2005` proof with the `cong` fix, the whole `30_Function` proof with the memoized closed-term check, and the test suite over both changes. Nothing else is independent of their results, so I'll pick up when they land.
+
+## Turn: 2026-09-15 19:36:42 (session 6cc35fc7)
+
+The remaining work waits on three runs already in flight: the whole `cggmp2005` proof, `32_pthread5`, and `count_up_down` (queued behind cggmp). I'll write the log and report once they finish.
+
+## Turn: 2026-09-15 19:37:45 (session 5c039b91)
+
+The report is written and compiles cleanly.
+
+**Files.** `docs-alethe/summary-of-changes.tex`, with the compiled `summary-of-changes.pdf` beside it, 10 pages. Both are untracked; I did not commit. Build products are covered by the existing ignore rules.
+
+**Structure of the document.**
+
+1. Overview, with a size table for each part and Figure 1, the pipeline: problem and proof into parser, realizer, driver, rule handlers, kernel, with the existing library underneath and arrows showing what each stage reuses.
+2. The parser: `Syntax`, `Parser`, `Realize`, and why realizing through cvc5's parser is what makes the term reconstructors reusable.
+3. Changes to the pre-existing library, with Figure 2 placing each change on the file it lands in. Every change is classed as performance optimization, generalization for sharing, bug fix, or new definition, with commit hashes, and a table gives the per-file line counts and classes.
+4. The three new verified modules placed inside the existing tree, `Proj`, `AciNorm`, `ResNorm`.
+5. Reconstruction of the Alethe rules, with Figure 3 mapping each rule family to the existing components it draws on, colored by whether the component was untouched, modified, or new. Then one table per family listing every rule and the exact theorem, tactic, verified program or meta reconstructor behind it, plus the tally of how the 117 generated RARE theorems are proved.
+6. Tests, scripts and documents.
+
+**Style.** Standalone article class, same TikZ libraries and color conventions as the paper, with a shared legend under each figure. Figures scale down only when wider than the page. The build log has no errors, no undefined references, and no overfull lines.
+
+One caveat on the content: the size figures and the reuse inventory come from the branch as it is today, so if the rule set or the RARE file changes the counts in Section 5 will need refreshing.
+
+## Turn: 2026-09-15 19:38:40 (session 6cc35fc7)
+
+The cggmp run is at 7 minutes and 3 GB, past the point where it died at 10 GB in 99 s before, and is now in the second half of the proof. Waiting for it and for count_up_down, which is queued behind it; then the log and the report.
+
+## Turn: 2026-09-15 19:43:44 (session 6cc35fc7)
+
+Nothing else is independent of the count_up_down result; waiting for it.
+
+## Turn: 2026-09-15 20:05 (session 6cc35fc7)
+
+**Request:** fix the parser and memory issues; assess handling the `ho_cong`
+proofs in Carcara's elaboration.
+
+Note: the machine rebooted around 19:00 and `/tmp` (the scratchpad) was
+wiped; every regenerated proof and harness was rebuilt from the benchmarks
+and the committed tooling. Nothing in the repository was affected.
+
+**Three fixes, three commits, `lake test` 149 passing after each.**
+
+1. `4238a64` *parser: persistent maps for the binding environment.* The
+   Dartagnan QF_LIA problems nest single-binding `let`s 117,000 deep
+   (`30_Function_Pointer3_vs-O0`, 19.7 MB, six assertions). `term`'s
+   `let` case extended `env.vars` while the parent scope still held the
+   map, so every `Std.HashMap.insert` copied it: quadratic in the depth.
+   Measured on the full problem (same machine, same load): arena stage
+   150 s before, 22 s after; S-expression stage 15 s both. Slice of
+   15,224-deep lets: 5.2 s → 3.1 s. This was already the shape of round
+   six's 284 s parse; the round-seven timeout came from the next item.
+2. `94f91d8` *cong: index the premises by their sides.* The veriT memory
+   failures (`ReachSafety-Loops`, 14 of them) all die on one step: a
+   `cong` over an `and` of 8,449 conjuncts (`t19047` in cggmp2005-O0,
+   9,490 in count_up_down). `align` scanned the whole premise list per
+   argument: quadratic time and, as measured, quadratic memory (synthetic
+   n-ary cong: 1,000 → 1.96 GB, 2,000 → 2.40 GB, 4,000 → 4.14 GB; with the
+   kernel off just the same, so reconstruction not kernel). The
+   congruence tactic itself is linear (12 ms at 4,000). A
+   `Std.HashMap (Term × Term) Premise` built once per step makes the
+   alignment linear: the synthetic 4,000 case is back to the 1.9 GB
+   baseline, and the real step takes 105 ms to reconstruct.
+3. `a389dbc` *memoize the closed-term check per node.* `6734243`'s
+   `closedTermCache` decided closedness of every reconstructed term with
+   `Expr.find?`, whose visited set lives only within one call: linear per
+   term, quadratic over the 700,000-node Dartagnan assertions. With the
+   parser fixed, 30_Function still sat 17 CPU minutes reconstructing its
+   six assertions. `closedIn` memoizes per Expr node in the reconstruction
+   state (`closedMemo`). This is the actual round-six → seven regression on
+   the two cvc5 parse timeouts (6734243 is in round seven's oleans, not
+   round six's): the parser was equally quadratic in both rounds.
+
+**Confirmed on the four benchmarks** (local, machine shared with other runs):
+
+| benchmark | round 6 | round 7 | now |
+|---|---|---|---|
+| QF_LIA/…/30_Function_Pointer3 (cvc5, 617 steps) | valid 769 s | timeout | **valid 209 s** (parse 49, realize 32, reconstruct 128, kernel 11; 3.2 GB) |
+| QF_LIA/…/32_pthread5 (cvc5, 291 steps) | valid 526 s | timeout | **valid 134 s** |
+| QF_LIA/…/cggmp2005-O0 (veriT, 29,667 steps) | memory | memory | **valid 688 s** (kernel 580; 3.5 GB) |
+| QF_LIA/…/count_up_down-1-O0 (veriT, 27,734 steps) | memory | memory | **valid 844 s** (kernel 750; 3.5 GB) |
+
+The two veriT proofs are now within reach of the limit but not safely:
+their remaining cost is kernel time on the `semilattice_simp` and `cong`
+steps over 8–9k-conjunct layers (10–13 s each, in `conclude`), and the
+cluster nodes are slower than this machine. They may still time out in
+round eight; that would be a timeout, not a memory failure, and the
+per-rule series will show it.
+
+**Not verified:** the other 12 veriT memory failures (QF_IDL `asp` and
+`parity`, not in the local mirror) — same family shape by their rule
+counts, but not run.
+
+**`ho_cong` — could elaboration remove it?** Shape (all 15 proofs,
+`incrementalScheduling` and Certora): cvc5 keeps the problem's
+`(define-fun max ((x Int) (y Int)) Int (ite (< x y) y x))` as a symbol,
+asserts `a0: (= max (lambda …))`, rewrites the body under a `bind`
+subproof (rare_rewrite / poly_simp / cong / trans / refl — all schematic in
+x, y), `trans a0 bind : (= max (lambda … body'))`, then
+`ho_cong : (= (max 0 t) ((lambda … body') 0 t))` per application, and
+`cong` over that. lean-smt expands `max` at parse time, so the bare symbol
+in `a0` and `ho_cong` is what cvc5's parser rejects (`Symbol 'max' not
+declared as a variable`).
+
+Two ways out:
+- *Carcara pass* (what was asked): expand the definition in the proof
+  (the parser's `apply_function_defs` does it for applications, but a bare
+  `max` becomes the body with free x y — wrong sort, so a dedicated pass),
+  beta-reduce every application of the lambda, and replace each `ho_cong`
+  by a copy of the `bind` subproof instantiated at that application's
+  arguments, joined by `cong` for the argument equalities. The subproof's
+  rules are schematic, so the instances stay valid. `a0`, the `bind` and
+  the `trans` then go unused and are pruned. Estimate: 1–2 days in
+  Carcara, with the risk in the instantiation (fresh ids, `:args` of
+  rare_rewrite instantiated, `evaluate`-like steps whose instances could
+  fold further — none present in these 44 subproofs).
+- *lean-smt* (the report's suggestion): stop expanding parameterised
+  `define-fun`s; realize `max` as a let-bound local definition, so `a0` is
+  `rfl`, `ho_cong` is `congr`, `bind` over a lambda is `funext`, and the
+  application beta-reduces definitionally. Half a day to a day, no
+  transformation of the proof, and it is not a solver quirk but ordinary
+  higher-order structure. This is my recommendation, but it touches the
+  checker, which the standing instruction reserves for clean rules only,
+  so it is Haniel's call.
