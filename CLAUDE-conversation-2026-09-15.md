@@ -341,3 +341,88 @@ re-applied my hunks minimally. The committed diff is 6 files.
 **Not done.** The report's residue paragraph still describes round seven as
 measured (the holes existed on that toolchain); a round eight would retire
 it. The cluster's `runs/alethe-lean7/bin/carcara` is still `29a8e966`.
+
+## Turn: 2026-09-15 09:44:40 (session 6cc35fc7)
+
+Done in Carcara; the checker under `Smt/` is untouched.
+
+**Carcara, branch `bv-fixes`, pushed** (two commits, 414 tests passing):
+
+- `d1823169` handles both shapes in the resolution elaborator. For veriT's step, the RUP fallback now reports the chain of one premise it finds, and the elaborator drops the step outright when that premise is the conclusion verbatim, so consumers reference the premise instead (the same thing `remove_reorderings` does). For cvc5's step, when neither inference route yields a chain, every premise literal under two or more negations that the conclusion does not keep is reduced by a `not_not` step and a binary resolution on it, and the chain is inferred over the reduced premises. Three elaboration tests, one per shape plus the weakened variant.
+- `69c92a64` fixes a collision the first change exposed: the budget pass named its pieces `t11076.t1…` while the reduced premises already held `t11076.t3`/`.t4`, and lean-smt refused the proof with `duplicate step id`. The id generator now skips ids already in the proof for both the budget and uncrowd passes.
+
+The minimal cvc5 shape elaborates to this, which lean-smt replays one pivot at a time:
+
+```
+(step t4.t1 (cl (not @p_1) p) :rule not_not)                     ; @p_1 = (not (not p))
+(step t4.t2 (cl p q) :rule resolution :premises (t1 t4.t1) :args (@p_1 true))
+(step t4.t3 (cl r q) :rule resolution :premises (t2 t4.t2) :args (p false))
+(step t4.t4 (cl r q s) :rule weakening :premises (t4.t3))
+(step t4 (cl q r s) :rule reordering :premises (t4.t4))
+```
+
+**Verified on all eight round-seven proofs**, regenerated locally with the cluster's solver and Carcara flags: zero elaboration warnings, and every one checks valid with no trusted step. BufAl, the largest, takes 45 s over 12,670 steps.
+
+**lean-smt** `a0d0dbd`: the pin in `scripts/setup-alethe.sh` moves to `69c92a64`, and the Vlunc and `uf.560771` proofs are regression tests under `Test/Alethe`. `lake test` passes 144.
+
+Two things to know. I ran `rustfmt` on one Carcara file and it followed the module tree into 19 files, since the repository is not rustfmt-clean; I reverted every file I had not meant to touch, and the committed diff is six files. And the cluster's `runs/alethe-lean7` still carries Carcara `29a8e966`, so the report's residue paragraph stays as measured until a round runs on the new binary.
+
+## Turn: 2026-09-15 14:04:04 (session 6cc35fc7)
+
+A/B on the profiled proof: the 230-premise step `t6906` goes from 1.147 s to 0.079 s (14×), all resolution from 2.08 s to 0.98 s, and the 669 small steps are unchanged at a 1.1 ms median, as the plan predicted. The full test suite is running now with the option off, followed by a sweep of every Alethe test with it on; I'll commit once both are clean.
+
+## Turn: 2026-09-15 11:30 (session 6cc35fc7)
+
+**Request:** execute stage 1 of RESOLUTION-PLAN.md.
+
+**Done, commit `9cdb6e0`.** `Smt/Reconstruct/Prop/ResNorm.lean` (verified core
++ meta layer, ~330 lines), the dispatch in `Smt/Alethe/Clause.lean` behind
+`smt.alethe.reflect` (default off) and `smt.alethe.reflectMinPremises`
+(default 0), tests. The checker's existing path is untouched and remains
+the fallback.
+
+Design as planned, with these decisions on the way:
+- Accumulator carried as a bitset from the start (`step acc c p =
+  clearLit acc p ||| maskExcept (negLit p) c`); the list form was never
+  built. Every proof went through on the first build.
+- Soundness is by `step_sound`: split on the running clause's witness
+  literal — not the pivot: survives `clearLit`; the pivot: the premise
+  supplies a literal, kept unless it is the complement, which
+  `denoteLit_negLit` refutes (two `omega` facts, as planned). No
+  `Classical`; `#print axioms check_sound` = `[propext, Quot.sound]`, both
+  from the core Nat/Bool lemmas.
+- `denoteImp` curried over the premises, `Eq.refl true` for the two Bool
+  conditions, raw Nat literals throughout, context via `AciNorm.mkContext`.
+- Hints: `:args` pivots reconstructed to Exprs and reified; a hint that
+  does not apply (or reifies to a stacked negation) is replaced by search;
+  no pivot → fresh index `2 * atoms.size`, which merges the premise.
+- `False` at the top of a premise is the empty clause; anywhere else an
+  atom. `True` is an atom.
+
+**Measured** (`perturbations_0…vnnlib.smt2.alethe`, the old-pipeline proof in
+the repo root, 6,629 steps; machine loaded by the other session's Carcara
+sweeps, so absolute numbers are inflated — compare within the pair):
+
+| | reflect off | reflect on |
+|---|---|---|
+| resolution, 670 steps | 2.083 s (kernel 1.488) | 0.981 s (kernel 0.743) |
+| `t6906`, 230 premises | 1.147 s | **0.079 s** (14.5×) |
+| the 669 small steps, median | 1.150 ms | 1.115 ms |
+
+Exactly the plan's prediction: the long chain gains an order of magnitude,
+the small steps sit on the per-step floor. So `reflectMinPremises` stays
+0 — the reflective path is never slower on the small steps here.
+
+**Verification.** `lake test` 149 passing (144 + the unit test + 4 Alethe
+quadruples: `res_chain230`, `res_wide1000` (QF_UF), `res_tautology`,
+`res_stacked_negation` (M0), each with `set_option smt.alethe.reflect
+true`). Then every Alethe test re-run with `lean -Dsmt.alethe.reflect=true`:
+47 tests, 0 outputs differ — including `hwbench_double_negation` and
+`res_stacked_negation`, whose `not_not` clauses the reifier declines and the
+old path checks. A trace of `res_tautology` shows `check_sound` closing all
+5 clausal steps.
+
+**Not done, from the plan's verification list:** the cluster round (step 4)
+— needs a proposal and Haniel's approval; and `smt.alethe.checkInner`
+still re-checks reflective terms with the elaborator if it is turned on
+(default off) — harmless, unmeasured. Stage 2 not started.
