@@ -206,17 +206,23 @@ def reconstructCong (s : Step) : ReconstructM Expr := do
   let start := if k == .APPLY_UF then 1 else 0
   if k == .APPLY_UF && l[0]! != r[0]! then
     throwError "cong: different function symbols"
-  -- premises need not be one per argument nor in order (reflexive ones may be given or omitted)
-  let matchesEq (pr : Premise) (a b : cvc5.Term) : Bool :=
-    pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL &&
-      ((pr.lits[0]![0]! == a && pr.lits[0]![1]! == b) || (pr.lits[0]![0]! == b && pr.lits[0]![1]! == a))
+  -- premises need not be one per argument nor in order (reflexive ones may be given or omitted).
+  -- They are indexed by their two sides, in both orders, so that the alignment is linear: a scan
+  -- of the premises per argument was quadratic, and on a `cong` over an `and` of 8,449 conjuncts
+  -- (QF_LIA/Dartagnan/cggmp2005-O0) it ran for a minute and exhausted the 10 GB heap
+  let mut byPair : Std.HashMap (cvc5.Term × cvc5.Term) Premise := {}
+  for pr in s.premises do
+    if pr.lits.size == 1 && pr.lits[0]!.getKind! == .EQUAL then
+      let (x, y) := (pr.lits[0]![0]!, pr.lits[0]![1]!)
+      byPair := byPair.insertIfNew (x, y) pr
+      byPair := byPair.insertIfNew (y, x) pr
   -- the proof of `a = b` for each argument pair
   let align (pairs : Array (cvc5.Term × cvc5.Term)) : ReconstructM (Array Expr) := do
     let mut hs := #[]
     for (a, b) in pairs do
       if a == b then
         hs := hs.push (← mkRefl a)
-      else if let some pr := s.premises.find? (matchesEq · a b) then
+      else if let some pr := byPair[(a, b)]? then
         hs := hs.push (← orient pr a b)
       else
         -- the defeq checks stay behind the syntactic ones (an `else if ← …` would hoist them out
