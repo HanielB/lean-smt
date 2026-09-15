@@ -81,6 +81,8 @@ structure Reconstruct.State where
   /-- The local context the reconstruction started in, set by the driver that wants closed terms
       cached across scopes (the Alethe checker); `none` disables `closedTermCache`. -/
   baseLCtx : Option LocalContext := none
+  /-- Whether a reconstructed term mentions a variable beyond `baseLCtx`, per node, for `closedIn`. -/
+  closedMemo : Std.HashMap Expr Bool := {}
   proofCache : Std.HashMap cvc5.Proof Expr := {}
   count : Nat := 0
   currAssums : Array Expr := #[]
@@ -154,6 +156,26 @@ def traceReconstructTerm (t : cvc5.Term) (r : Except Exception Expr) : Reconstru
     | .ok e    => m!"{e}"
     | .error _ => m!"{bombEmoji}"
 
+/-- Whether `e` mentions no free variable outside `base`. Memoized per node in the state, across
+    calls: `Expr.find?` remembers what it visited only within one call, so asking it for every
+    reconstructed term was linear in the term and quadratic over a large assertion (the Dartagnan
+    QF_LIA problems, with assertions of 700,000 nodes, spent minutes here). -/
+partial def closedIn (base : LocalContext) (e : Expr) : ReconstructM Bool := do
+  if !e.hasFVar then return true
+  if let some b := (← get).closedMemo[e]? then return b
+  let b ← match e with
+    | .fvar id => pure (base.contains id)
+    | .app f a => do if ← closedIn base f then closedIn base a else pure false
+    | .lam _ t b _ | .forallE _ t b _ => do if ← closedIn base t then closedIn base b else pure false
+    | .letE _ t v b _ => do
+      if ← closedIn base t then if ← closedIn base v then closedIn base b else pure false
+      else pure false
+    | .mdata _ b => closedIn base b
+    | .proj _ _ b => closedIn base b
+    | _ => pure true
+  modify fun st => { st with closedMemo := st.closedMemo.insert e b }
+  return b
+
 def reconstructTerm : cvc5.Term → ReconstructM Expr := withTermCache fun t => do
   withTraceNode ((`smt.reconstruct.term).str t.getKind!.toString) (traceReconstructTerm t) do
     let rs ← getReconstructors ``TermReconstructor TermReconstructor
@@ -170,9 +192,9 @@ where
     -- with a base context set, closed terms (mentioning no variable of a binder, `let` or anchor
     -- opened since) are cached for good: `find?` memoizes on pointers, so the check is linear in
     -- the DAG size of `e`. Without one, every term is scoped, as before.
-    let closed := match (← get).baseLCtx with
-      | some base => !e.hasFVar || (e.find? fun s => s.isFVar && !base.contains s.fvarId!).isNone
-      | none => false
+    let closed ← match (← get).baseLCtx with
+      | some base => closedIn base e
+      | none => pure false
     modify fun state =>
       if closed then { state with closedTermCache := state.closedTermCache.insert t e }
       else { state with termCache := state.termCache.insert t e }
