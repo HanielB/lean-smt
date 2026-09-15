@@ -32,7 +32,7 @@ skip_lean=false
 skip_carcara=false
 carcara_src=""
 carcara_remote=${CARCARA_REMOTE:-https://github.com/hanielb/carcara.git}
-carcara_ref=${CARCARA_REF:-29a8e966}
+carcara_ref=${CARCARA_REF:-69c92a64}
 prefix="$repo/.lake/alethe"
 
 while [ $# -gt 0 ]; do
