@@ -30,6 +30,19 @@ namespace Smt.Alethe
 open Lean Qq
 open Smt.Reconstruct
 
+register_option smt.alethe.reflect : Bool := {
+  defValue := false
+  descr := "check the clausal rules (resolution, contraction, reordering, or, weakening) with the \
+    reflective clause checker, one kernel evaluation per step; the term-by-term reconstruction \
+    remains the fallback for the steps it declines"
+}
+
+register_option smt.alethe.reflectMinPremises : Nat := {
+  defValue := 0
+  descr := "with smt.alethe.reflect, only resolution steps with at least this many premises take \
+    the reflective path"
+}
+
 /-- Given `hp : p`, prove `concl` when `p` and `concl` are the same clause up to
     associativity, commutativity, idempotence and flattening of `∨`. -/
 def fixClause (p : Expr) (hp : Expr) (concl : Expr) : ReconstructM Expr := do
@@ -119,6 +132,23 @@ where
     let some cp' ← reindexClause cc cp d | return (cc, cp)
     return (d, cp')
 
+/-- The reflective path for a clausal step: the premises' propositions reified as clauses over a
+    context of atoms, the chain folded on bitsets, and one soundness theorem applied as a term
+    (`Prop.ResNorm`). The `:args` pivots are hints. `none` when the step has a literal under two
+    negations, which the encoding cannot express, or when the chain does not reach the stated
+    clause, in which case the caller falls back. -/
+def reflectClausal (s : Step) : ReconstructM (Option Expr) := do
+  let hints : Array (Option Prop.ResNorm.Hint) ← match pivots? s with
+    | some ps => ps.mapM fun (l, pol) => do return some { pivot := ← reconstructTerm l, pol }
+    | none => pure (Array.replicate (s.premises.size - 1) none)
+  Prop.ResNorm.proveClause (s.premises.map fun p => (p.proof, p.concl)) hints s.concl
+
+/-- Whether `s` goes through the reflective path first. -/
+def useReflect (s : Step) : ReconstructM Bool := do
+  let opts ← getOptions
+  return smt.alethe.reflect.get opts
+    && s.premises.size ≥ smt.alethe.reflectMinPremises.get opts
+
 /-- A proof of the stated clause of `s` from a computed clause `cc` with proof `cp`. -/
 def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM Expr := do
   if cc == s.lits then
@@ -140,13 +170,22 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
           && p.lits[0]![0]!.getBooleanValue! then
         let h : Q(¬True) := p.proof
         return ← addThm s.concl q($h trivial)
+    if ← useReflect s then
+      if let some h ← reflectClausal s then
+        return ← addThm s.concl h
     let (cc, cp) ← resolveChain s
     let h ← concludeClause s cc cp
     addThm s.concl h
   | "contraction" | "reordering" | "or" =>
+    if smt.alethe.reflect.get (← getOptions) then
+      if let some h ← reflectClausal s then
+        return ← addThm s.concl h
     let p := s.premise! 0
     addThm s.concl (← concludeClause s p.lits p.proof)
   | "weakening" =>
+    if smt.alethe.reflect.get (← getOptions) then
+      if let some h ← reflectClausal s then
+        return ← addThm s.concl h
     -- (cl l₁ … lₙ) ⊢ (cl l₁ … lₙ m₁ … mₖ)
     let p := s.premise! 0
     let n := p.lits.size
