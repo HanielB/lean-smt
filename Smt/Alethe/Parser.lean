@@ -8,6 +8,7 @@ Authors: Haniel Barbosa
 module
 
 public import Smt.Alethe.Syntax
+public import Lean.Data.PersistentHashMap
 public import Std.Data.HashSet
 public meta import Std.Data.HashSet
 
@@ -40,11 +41,16 @@ syntax (`-1`, `1/2`) are normalized to applications.
 namespace Smt.Alethe.Parser
 
 /-- Binding environment: `some n` substitutes the node `n`; `none` marks a name shadowed by a
-    quantifier binder (so that named terms and `let`s of the same name do not apply). -/
+    quantifier binder (so that named terms and `let`s of the same name do not apply).
+
+    The maps are persistent: a scope extends its parent's environment while the parent still
+    holds it, and with a `Std.HashMap` every such extension copied the whole map, which made a
+    chain of nested `let`s quadratic in its depth (117,000 deep on the Dartagnan QF_LIA problems,
+    minutes of parsing). -/
 structure Env where
-  vars : Std.HashMap String (Option Nat) := {}
+  vars : Lean.PersistentHashMap String (Option Nat) := {}
   /-- The environment of right-hand sides: the context's variables without its substitutions. -/
-  fixed : Std.HashMap String (Option Nat) := {}
+  fixed : Lean.PersistentHashMap String (Option Nat) := {}
   /-- Identities of the two environments, keys of the `:named` resolution cache. -/
   id : Nat := 0
   fixedId : Nat := 0
@@ -224,7 +230,7 @@ partial def atomsOfNamed (s : String) : M (Std.HashSet String) := do
 partial def term (env : Env) : Sexp → M Nat
   | .atom s => do
     let s := canonSymbol s
-    match env.vars[s]? with
+    match env.vars.find? s with
     | some (some n) => return n
     | some none => mkAtom s (bound := true)
     | none =>
@@ -235,7 +241,7 @@ partial def term (env : Env) : Sexp → M Nat
         -- a term that mentions none of the scope's variables means the same everywhere
         let closed ← if env.vars.isEmpty then pure true else do
           let atoms ← atomsOfNamed s
-          pure !(env.vars.keys.any (atoms.contains ·))
+          pure !(env.vars.foldl (fun b k _ => b || atoms.contains k) false)
         if closed then
           if let some n := (← get).closedCache[s]? then return n
           let n ← term env t
@@ -346,7 +352,7 @@ def anchorArgs (env : Env) (args : List Sexp) : M (Env × Array (Arg Nat)) := do
       -- a substitution: `t` under the enclosing substitution, `x` replaced on left-hand sides
       -- only (on right-hand sides it keeps its enclosing meaning)
       let t ← term env t
-      if env.fixed[x]? == some (some t) then
+      if env.fixed.find? x == some (some t) then
         -- `(:= x x)` for the context's own variable `x`: the identity, no renaming needed (veriT
         -- writes every `bind` this way)
         env := { env with vars := env.vars.insert x (some t) }
