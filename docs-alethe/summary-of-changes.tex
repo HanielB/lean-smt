@@ -156,7 +156,7 @@ that is every \file{Lemmas.lean}, every \file{Rewrites.lean} and
     Part & Files & Lines \\
     \midrule
     \alethe parser & \file{Syntax}, \file{Parser}, \file{Realize} (3 new) & 946 \\
-    Rule reconstruction & \file{Basic}, \file{Clause}, \file{Prop}, \file{Arith}, \file{UF}, \file{Quant}, \file{Polyeq}, \file{Lemmas}, \file{Rare}, \file{Rare/Basic} (10 new) & 3\,187 \\
+    Rule reconstruction & \file{Basic}, \file{Clause}, \file{Prop}, \file{Arith}, \file{UF}, \file{Quant}, \file{Polyeq}, \file{Lemmas}, \file{Rare}, \file{Rare/Basic} (10 new) & 3\,160 \\
     Generated RARE table & \file{Rare/Rules.lean} (1 new; generator \file{gen.py} 445, input \file{rewrites.eo} 513) & 1\,380 \\
     Driver, frontend, tactic & \file{Reconstruct}, \file{Frontend}, \file{Command}, \file{Tactic}, \file{Alethe.lean} (5 new) & 1\,381 \\
     New verified modules in the existing tree & \file{Prop/AciNorm} 461, \file{Prop/Proj} 239, \file{Prop/ResNorm} 397 (3 new) & 1\,097 \\
@@ -438,11 +438,12 @@ pipeline as the evaluation runs it: \code{polyeq}, \code{local},
 \code{absorb}, \code{budget}, and the \code{reordering} pass. Those passes
 remove the \code{*_simplify} rules and the legacy ACI rules (replaced by
 \code{rare_rewrite} and \code{evaluate} chains and by the structural
-\code{semilattice_simp}, \code{boolean_group_simp} and \code{assoc_simp}),
-\code{bounded_farkas} (rewritten by \code{local} into \code{la_generic}) and
-\code{reordering}. The non-linear multiplication rules are left out as well.
-The handlers also accept those rules, so that a raw solver proof can be
-checked, but they are not covered here.
+\code{semilattice_simp}, \code{boolean_group_simp} and \code{assoc_simp})
+and \code{reordering}. The non-linear multiplication rules are left out as
+well. The handlers also accept those rules, so that a raw solver proof can
+be checked, but they are not covered here. The reconstructors of
+\code{bfun_elim}, \code{th_resolution} and \code{strict_resolution} have
+been dropped, no corpus of the evaluation emitting them after the pipeline.
 Figure~\ref{fig:rules} shows which existing component each family draws on;
 the subsections list every rule. Throughout, a component is \emph{existing}
 if it is present on \code{main} and \emph{new} otherwise; the new verified
@@ -468,8 +469,8 @@ modules of Section~\ref{sec:newlib} are marked as such.
     \node[old, right=of quantrw] (quantlem) {\code{Quant.exists_congr_eq}\\\code{Prop.impliesElim}};
     % left column: handler families
     \node[new, left=14mm of resol] (clause) {\file{Clause.lean}\\{\scriptsize resolution, contraction, or,}\\{\scriptsize weakening, subproof}};
-    \node[new, left=14mm of proplem] (prop) {\file{Prop.lean}\\{\scriptsize 46 propositional and CNF rules}};
-    \node[new, left=14mm of arithlem] (arith) {\file{Arith.lean}\\{\scriptsize la\_generic, la\_tautology, poly\_simp*,}\\{\scriptsize div\_intro, la\_disequality, \ldots}};
+    \node[new, left=14mm of proplem] (prop) {\file{Prop.lean}\\{\scriptsize 45 propositional and CNF rules}};
+    \node[new, left=14mm of arithlem] (arith) {\file{Arith.lean}\\{\scriptsize la\_generic, bounded\_farkas, poly\_simp*,}\\{\scriptsize div\_intro, la\_disequality, \ldots}};
     \node[new, left=14mm of uflem] (uf) {\file{UF.lean}\\{\scriptsize cong, trans, symm, distinct\_elim,}\\{\scriptsize *\_simp, evaluate, rare\_rewrite}};
     \node[new, left=14mm of rewrites] (rare) {\file{Rare.lean}, \file{Rare/Rules.lean}\\{\scriptsize 105 RARE rules, 113 theorems}};
     \node[new, left=14mm of quantrw] (quant) {\file{Quant.lean}\\{\scriptsize bind, forall\_inst, onepoint, sko\_*,}\\{\scriptsize qnt\_*, miniscope\_*, let}};
@@ -516,14 +517,14 @@ reuses the entire \path{smt} front end: \path{Preprocess.mono},
 nested \path{withLocalDecl} per declaration, and \path{choice} symbols are
 bound to \path{Classical.epsilon} over \path{reconstructSortLevelAndSort}.
 
-\subsection{Clausal rules (\file{Clause.lean}, 210 lines)}
+\subsection{Clausal rules (\file{Clause.lean}, 227 lines)}
 
 \begin{center}\footnotesize
 \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
   \toprule
   Rule & Component \\
   \midrule
-  \code{resolution}, \code{th_resolution}, \code{strict_resolution} & existing \code{Prop.reconstructResolution}, \code{Prop.getResolutionResult}; \\
+  \code{resolution} & existing \code{Prop.reconstructResolution}, \code{Prop.getResolutionResult}; \\
   & new \code{ResNorm.proveClause} when \code{smt.alethe.reflect} is set \\
   \code{contraction}, \code{or} & new lemma \code{orN_of_map}; \code{ResNorm} when set \\
   \code{weakening} & existing \code{Prop.orN_append_left} \\
@@ -540,9 +541,9 @@ and the existing AC tactic \path{Meta.AC.rewriteUnnormalizedTop} from
 itself holds the pivot no longer re-resolves. The existing resolution
 reconstructor is the largest single reuse in the checker.
 
-\subsection{Propositional rules (\file{Prop.lean}, 296 lines)}
+\subsection{Propositional rules (\file{Prop.lean}, 266 lines)}
 
-Of the 46 rules, 40 are direct applications of lemmas that existed in
+Of the 45 rules, 40 are direct applications of lemmas that existed in
 \file{Prop/Lemmas.lean} and \file{Builtin/Lemmas.lean}.
 
 \begin{center}\footnotesize
@@ -575,15 +576,14 @@ Of the 46 rules, 40 are direct applications of lemmas that existed in
   \code{ite_then_intro}, \code{ite_else_intro} & new lemmas of the same names \\
   \code{connective_def}, \code{qnt_duality} & new lemmas \code{connective_def_xor/eq/ite}; quantifier cases by a small \code{simp} set; existing \code{synthDecidableInstance} \\
   \code{and_intro} & new meta code, an \code{And.intro} fold \\
-  \code{bfun_elim} & new meta code, a classical case split (\code{proveByCases}) \\
   \bottomrule
 \end{tabularx}
 \end{center}
 
 \subsection{Arithmetic rules (\file{Arith.lean}, 553 lines)}
 
-The Farkas driver behind \code{la_generic} and \code{la_tautology} is new
-meta code, about 340 lines: the negations of the clause's literals are
+The Farkas driver behind \code{la_generic}, \code{la_tautology} and
+\code{bounded_farkas} is new meta code, about 340 lines: the negations of the clause's literals are
 assumed, oriented into bounds, strengthened for strict integer bounds,
 scaled by the coefficients given as \code{:args}, summed, and refuted
 through the normalized difference of the two sides and a decidable fact
@@ -595,7 +595,7 @@ existing.
   \toprule
   Rule & Component \\
   \midrule
-  \code{la_generic}, \code{la_tautology} & existing \code{Int.sum_ub}$_{1..9}$, \code{Rat.sum_ub}$_{1..9}$; existing \code{mul_pos_lt/le/eq}, \code{mul_neg_eq} (Int, Rat); existing \code{Int.polyNorm}, \code{Rat.polyNorm} and their native variants; existing \code{Prop.notNotElim}; \lean core \code{omega} for integer tightening; new lemmas \code{farkas_lt/le/eq} (Int, Rat), \code{orN_of_impliesN_not} \\
+  \code{la_generic}, \code{la_tautology}, \code{bounded_farkas} & existing \code{Int.sum_ub}$_{1..9}$, \code{Rat.sum_ub}$_{1..9}$; existing \code{mul_pos_lt/le/eq}, \code{mul_neg_eq} (Int, Rat); existing \code{Int.polyNorm}, \code{Rat.polyNorm} and their native variants; existing \code{Prop.notNotElim}; \lean core \code{omega} for integer tightening; new lemmas \code{farkas_lt/le/eq} (Int, Rat), \code{orN_of_impliesN_not} \\
   \code{poly_simp} & existing \code{Int.polyNorm}, \code{Rat.polyNorm}, and native variants \\
   \code{poly_simp_rel} & \code{reconstructArithPolyNormRel} (Int, Rat), generalized from the existing handler; nine new mixed-sort lemmas over the existing \code{Rat.*_of_sub_eq_*_int_left} \\
   \code{la_rw_eq} & new lemmas \code{Int.la_rw_eq}, \code{Rat.la_rw_eq} over existing \code{Rat.trichotomy}$_2$ \\
@@ -615,7 +615,7 @@ The new Farkas, disequality, totality and \path{la_rw_eq} lemmas in
 No \leansmt tactic is invoked by name: the polynomial normalizer is called
 as a function on a goal, and \path{omega} is \lean's.
 
-\subsection{Equality and rewriting rules (\file{UF.lean}, 550 lines)}
+\subsection{Equality and rewriting rules (\file{UF.lean}, 556 lines)}
 
 \begin{center}\footnotesize
 \begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
