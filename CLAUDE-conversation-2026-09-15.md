@@ -776,3 +776,80 @@ Mistake on the way: my first proposal command also syntax-checked the
 submit drivers by name, which the guard blocks on sight; it recorded that
 line as pending. Re-staged with the deploy alone (sixth time the guard has
 caught a purely local command; the drivers are now checked with a glob).
+
+## Turn: 2026-09-15 22:47:00 (session 6cc35fc7)
+
+Round eight is prepared and its first step is staged for your approval.
+
+**What the round carries over round seven**
+- Carcara `69c92a64`: the two resolution shapes get a chain, so round seven's 8 trusted steps check.
+- lean-smt `b9f4635`: the reflective clause checker, turned **on** for this round; the parser's persistent environment; `cong` premises indexed; the closed-term check memoized.
+- `run-arms.sh` changes by one line: `LEAN_REFLECT` (default 1) adds `set_option smt.alethe.reflect true` to the check files. cvc5, veriT, the sets, `rewrites.eo`, and all limits are unchanged, so rounds seven and eight compare directly, and the per-rule series on the clausal rules is the reflective checker's measurement.
+
+**Staged now** (run `cluster-approve` in a real terminal to review):
+
+```
+bash /home/hbarbosa/exp/alethe-lean/deploy-alethe-lean8.sh
+```
+
+It creates `runs/alethe-lean8` on scratch from alethe-lean7 (binaries and sets copied, the lean-smt tree hard-linked then rsynced to the new oleans), uploads Carcara, the runner, and the two drivers, then prints versions, md5 checks against round seven (cvc5, veriT, and `rewrites.eo` should read OK, `run-arms.sh` DIFF), and runs both solvers on one QF_UF and one QF_LIA benchmark on the head node with reflect on.
+
+**Sequence after that**, each its own approval:
+1. Smoke dry-run, then smoke submit: the same tenth-sample as round seven's two passes, into `cvc5-8smoke` / `verit-8smoke`, jobs `alean8s-*`, octa, `-j 8`, wall 3000 s, 12000 MB, 1 cpu.
+2. Pair it against round seven's second smoke pass. The gate is the same as last time: `valid → holey` must be 0, and no `valid → timeout` away from the 900 s boundary.
+3. Full dry-run, then full submit: the twelve sets into `cvc5-8` / `verit-8`, jobs `alean8-*`, same limits.
+
+Logged as `f9f6782`. One slip to know about: my first proposal also syntax-checked the submit drivers by name, which the guard blocks on sight, so it briefly recorded that line as pending; it was re-staged with the deploy alone, and what is pending now is exactly the command above.
+
+## Turn: 2026-09-15 22:58:21 (session 6cc35fc7)
+
+The deploy itself is done and correct; only its verification tail was slow, because it runs the full pipeline on the first benchmark of each set and the first QF_UF benchmark is one of the biggest proofs in the corpus.
+
+**Deployed and verified read-only**: Carcara `69c92a64`, cvc5 and veriT and `rewrites.eo` byte-identical to round seven, `run-arms.sh` at md5 `39d87294…` with the reflect switch, 14 full plus 14 sample sets (25,200 and 2,528 benchmarks), 236 oleans against round seven's 235 with the extra being the reflective checker module, and both round-eight drivers in `scripts/`. Three olean md5s match my local build.
+
+**Staged for approval** — a two-minute replacement for that slow tail, on three small benchmarks instead:
+
+```
+bash /home/hbarbosa/exp/alethe-lean/verify-alethe-lean8.sh
+```
+
+It prints the Carcara version, the runner md5, and the reflect lines, then runs both solvers through all five arms on a 1.7 KB QF_UF, a 1.3 KB QF_LIA, and a 43 KB UF benchmark, with a 400 s cap each. Head node only, writing nothing outside `/tmp`.
+
+If you would rather skip it, the smoke job exercises the same toolchain on 2,528 benchmarks and is the next step either way. Say so and I'll stage the smoke dry-run instead.
+
+## Turn: 2026-09-15 20:55 (session 6cc35fc7)
+
+**Round eight deployed and verified on the head node.**
+
+The deploy ran; it was interrupted only in its verification tail, which runs
+all five arms on the *first* benchmark of each set — the first QF_UF one is
+among the largest proofs in the corpus, so that tail can take half an hour.
+Everything it uploads had already completed. Verified read-only afterwards:
+
+| | |
+|---|---|
+| carcara | `69c92a64` |
+| cvc5, veriT, rewrites.eo | byte-identical to round seven |
+| run-arms.sh | md5 `39d87294…`, the LEAN_REFLECT switch |
+| sets | 14 full + 14 sample; 25,200 and 2,528 benchmarks |
+| oleans | 236 (round seven 235; the extra is ResNorm), three md5s match local |
+| drivers | both round-eight scripts in scripts/ |
+
+One reading trap worth recording: `du -sh` over the two run directories
+reported alethe-lean8's `.lake` as 83 MB, which looked like a truncated
+upload. It is not — `du` counts a hard-linked inode once, for the first path
+it sees, and the deploy seeds the tree with `cp -al` from round seven.
+Measured alone, alethe-lean8's `.lake` is 1.3 GB. Also, the deploy's line
+`reflect lines in run-arms.sh: 2 (expect 1)` is my check being miscalibrated,
+not a fault: the runner names the option twice, once in the comment
+describing the switch and once in the line that emits it.
+
+**`verify-alethe-lean8.sh`** (new) replaces that slow tail with the same
+check on three deliberately small benchmarks — 1.7 KB QF_UF, 1.3 KB QF_LIA,
+43 KB UF — both solvers, all five arms, 400 s cap each. Run and approved:
+all six **valid, trusted 0, holes 0**, and the elaborated proofs are tiny
+(1 to 63 steps), so this proves the toolchain end to end rather than any
+performance claim. Whole run under two minutes.
+
+Staged next: the smoke dry run (submits nothing), whose output goes to a log
+on scratch so it can be re-read without a second approval.
