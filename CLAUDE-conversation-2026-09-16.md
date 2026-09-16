@@ -222,3 +222,27 @@ tasks, octa, wall 3000 s, memlimit 12000MB, into cvc5-8/verit-8, nothing
 submitted.
 
 Staged: the full submission.
+
+## Turn: 2026-09-16 11:35:22 (session 6cc35fc7)
+
+Both changes are deployed and verified, and the full round is staged.
+
+```
+cluster-run barrett2 'tmux new-session -d -s alean8 "bash …/submit-alethe-lean8.sh …"; sleep 90; …'
+```
+
+It submits the twelve sets for both solvers from a detached tmux, so the aggregator outlives the ssh session, then reports the submitted count, any aggregator or error lines, and the queue. Twenty-four "Submitted batch job" and two "started aggregator" is what it should say.
+
+One thing to carry into reading the results: the reordering pass makes elaborated proofs shorter, so **per-proof step counts will not be comparable with round seven**. Per-rule times still are, for the rules that remain, and `reordering` will simply vanish from the series.
+
+A note on how both of these were found, since it bears on how much the smoke is worth. My original local A/B ran on a proof with no `or`, `weakening`, `contraction` or `reordering` steps in it, so it measured a rule set that excluded every rule that later regressed — and the same gap made the reordering pass look like a no-op on my four test proofs until I generated a resolution-heavy one. The smoke pass caught the first regression, and a purpose-built synthetic caught the second. Neither would have surfaced from the benchmark I had been using.
+
+**Round eight submitted** (full), 2026-09-16: 24 "Submitted batch job", two
+"started aggregator" (3355334, 3355367), queue `alean8-cvc5` 23,280 PD + 48 R
+and `alean8-verit` 23,328 PD. 46,656 tasks, 23,328 per solver, into
+`cvc5-8` / `verit-8`.
+
+Toolchain of record for round eight: carcara `69c92a64`, lean-smt oleans
+`f1d6a7f`, run-arms.sh md5 `8b9aec5f…` (pipeline `polyeq local core-simp-rare
+budget reordering`, `LEAN_REFLECT=1`). cvc5, veriT, the twelve sets and
+rewrites.eo byte-identical to round seven.
