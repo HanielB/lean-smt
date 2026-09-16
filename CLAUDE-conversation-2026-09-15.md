@@ -853,3 +853,67 @@ performance claim. Whole run under two minutes.
 
 Staged next: the smoke dry run (submits nothing), whose output goes to a log
 on scratch so it can be re-read without a second approval.
+
+## Turn: 2026-09-15 23:02:59 (session 6cc35fc7)
+
+Verification passed. All six runs came back **valid, trusted 0, holes 0**, both solvers across all five arms, in under two minutes:
+
+| benchmark | cvc5 | veriT |
+|---|---|---|
+| QF_UF Rodin, 1.7 KB | valid, 1 step | valid, 1 step |
+| QF_LIA SMPT, 1.3 KB | valid, 19 steps | valid, 63 steps |
+| UF Barrett, 43 KB | valid, 31 steps | valid, 21 steps |
+
+Carcara reports `69c92a64`, the runner md5 is `39d87294…`, and the reflect option is on the line that emits it. These proofs are tiny by design, so this establishes that the toolchain works end to end, not any performance claim.
+
+One thing worth knowing, since it looked alarming mid-deploy: `du` reported the deployed olean tree as 83 MB, which reads like a truncated upload. It was not. `du` counts a hard-linked inode once, against the first path it encounters, and the deploy seeds the tree from round seven with hard links. Measured on its own the tree is 1.3 GB, with 236 oleans against round seven's 235, the extra one being the reflective checker module.
+
+**Staged next** — the smoke dry run, which submits nothing:
+
+```
+cluster-run barrett2 'bash …/submit-alethe-lean8-smoke.sh --dry-run > …/alean8-smoke-dryrun.log 2>&1; …'
+```
+
+It writes the full output to a log on scratch so I can re-read it without asking you again, then prints the first 50 lines. The driver it previews: octa, `-j 8`, wall 3000 s, 12000 MB, 1 cpu, the twelve sample sets at 2,528 benchmarks per solver, into `cvc5-8smoke` and `verit-8smoke`, jobs `alean8s-*`.
+
+## Turn: 2026-09-15 23:06:22 (session 6cc35fc7)
+
+The dry run submitted nothing and the plan is exactly right. It also corrects a number I gave you earlier.
+
+| | |
+|---|---|
+| arrays | 24, one per set per solver |
+| tasks | 4,680 total, **2,340 per solver** |
+| partition, QOS | octa, max2 |
+| limits | wall 3000 s, 12,000 MB per run, 1 cpu, 8 jobs per node |
+| executables | `run-cvc5.sh` and `run-verit.sh` from `alethe-lean8` |
+| submitted | nothing |
+
+I had said 2,528 per solver. That is the count across all fourteen sample sets on disk; the round uses twelve of them, which is 2,340. The same distinction applies to the full round, where the fourteen sets hold 25,200 but the twelve used hold 23,328. The twelve array sizes add up to 2,340 exactly, so nothing is missing.
+
+The SLURM memory line reads 16,000 MB against the 12,000 MB I quoted. The submit tool pads the SLURM reservation above the limit it actually enforces on each run, which is the `runexec --memlimit 12000MB` seen on all 24 arrays. Round seven ran the same way.
+
+**Staged next** — the real smoke submission:
+
+```
+cluster-run barrett2 'tmux new-session -d -s alean8s "bash …/submit-alethe-lean8-smoke.sh …"; sleep 60; …'
+```
+
+It runs from a detached tmux, since the aggregator is a foreground process on the head node and dies with the ssh session, then reports after a minute how many arrays went in, any aggregator or error lines, and the queue by job name and state. Twenty-four "Submitted batch job" lines and one "started aggregator" is what it should say.
+
+**Smoke dry run** (approved, `scripts/alean8-smoke-dryrun.log`, 1,462 lines):
+24 arrays, 4,680 tasks, octa, qos max2, `-c 1`, wall 3000 s, `runexec
+--memlimit 12000MB` on all 24, executables `run-cvc5.sh`/`run-verit.sh` from
+alethe-lean8, nothing submitted.
+
+It corrected a count I had been quoting: the sample is **2,340 per solver**,
+not 2,528. 2,528 is all *fourteen* s10 sets on disk; the round uses twelve
+(LIA 27 and LRA 161 are the extras). The twelve add to 2,340 exactly. Same
+distinction as the full round, where fourteen sets hold 25,200 and the twelve
+used hold 23,328. Also: SLURM reserves `--mem=16000M` while the enforced
+per-run limit is `runexec --memlimit 12000MB` — the submit tool's own
+padding, unchanged from round seven.
+
+**Smoke submitted** at 2026-09-15 ~21:05: 24 "Submitted batch job", two
+"started aggregator" (one per solver, one per submit call), queue reading
+`alean8s-cvc5` 2,139 PD + 200 R and `alean8s-verit` 2,340 PD.
