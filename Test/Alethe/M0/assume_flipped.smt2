@@ -1,0 +1,6 @@
+(set-logic LRA)
+(declare-fun x () Real)
+(declare-fun y () Real)
+(assert (= 0.0 y))
+(assert (not (= 0.0 y)))
+(check-sat)

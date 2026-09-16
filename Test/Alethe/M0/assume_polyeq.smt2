@@ -3,6 +3,7 @@
 (declare-fun y () Real)
 (assert (<= x 0.0))
 (assert (= 0.0 y))
+(assert (< y (/ 1 3)))
 (assert (forall ((z Real)) (=> (< z y) (< z 0.0))))
 (assert (not (<= x 0.0)))
 (check-sat)

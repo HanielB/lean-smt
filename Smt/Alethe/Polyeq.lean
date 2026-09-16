@@ -9,106 +9,56 @@ module
 
 public import Smt.Alethe.Basic
 public meta import Smt.Alethe.Basic
-public import Smt.Alethe.Lemmas
 
 public meta section
 
 /-!
-# Equality of terms modulo representation (Carcara's `polyeq`)
+# Equality of terms modulo the spelling of numerals
 
-An `assume` of a proof must be an assertion of the problem, but the solver may spell the same
-assertion differently: cvc5 prints every rational as `n/d` (`0/1` for the problem's `0.0`), an
-equality may come flipped, bound variables renamed, an associative application regrouped. Carcara
-accepts an `assume` that matches an assertion up to these (`polyeq` with `mod_reordering`,
-`mod_nary` and `alpha_equiv`, in `checker/shared.rs`). `polyeq` below does the same on cvc5 terms,
-and `polyeqProof?` then proves the two propositions equal, so that the assertion's hypothesis can
-stand for the assumption.
+An `assume` of a proof must be an assertion of the problem. Carcara's `polyeq` elaboration pass
+makes that syntactic: an `assume` that matches an assertion only up to the orientation of
+equalities, the regrouping of associative applications or the names of bound variables is
+replaced by the assertion itself, with explicit steps deriving the proof's spelling. So after the
+pass every `assume` is an assertion of the problem *as Carcara identifies terms*.
+
+Carcara identifies numerals by value: `0.0`, `0/1` and `(/ 0 1)` are one constant to it, so an
+`assume` differing from its assertion only there is an exact match on the Carcara side, nothing is
+elaborated, and its printer picks its own spelling for the output. The checker realizes both sides
+through cvc5's parser, which is syntactic, and so sees two different terms. That is the one
+difference this module accepts: `polyeq` compares two cvc5 terms structurally, numerals by value,
+and `polyeqProof?` proves the two propositions equal by congruence down to the numerals, where the
+kernel unfolds one spelling to the other. Anything beyond that (a flipped equality, a regrouped
+application, a renamed binder) is not accepted, since the pass removes it before the proof reaches
+the checker.
 -/
 
 namespace Smt.Alethe
 
 open Lean Meta
 
-/-- The kinds whose applications are compared after flattening, so that `(+ (+ a b) c)` and
-    `(+ a b c)` are the same term. -/
-def assocKinds : List cvc5.Kind :=
-  [.AND, .OR, .ADD, .MULT, .STRING_CONCAT,
-   .BITVECTOR_ADD, .BITVECTOR_MULT, .BITVECTOR_AND, .BITVECTOR_OR, .BITVECTOR_XOR,
-   .BITVECTOR_CONCAT]
+/-- Are `a` and `b` the same cvc5 term up to the spelling of numerals (`0.0`, `0/1`, `(- 0)`,
+    `(to_real 0)`, `(/ 1.0 3.0)`)? Everything else is compared syntactically: kinds, operators,
+    arity, and the children in order. -/
+partial def polyeq (a b : cvc5.Term) : Bool := Id.run do
+  if a == b then return true
+  if let some x := constValue? a then
+    if let some y := constValue? b then
+      return x == y
+  if a.getKind! != b.getKind! then return false
+  let n := a.getNumChildren
+  if n == 0 || n != b.getNumChildren then return false
+  if a.hasOp && b.hasOp && a.getOp! != b.getOp! then return false
+  for i in [0:n] do
+    if !polyeq a[i]! b[i]! then return false
+  return true
 
-/-- The kinds binding the variables of their first child (a `VARIABLE_LIST`). -/
-def binderKinds : List cvc5.Kind := [.FORALL, .EXISTS, .LAMBDA]
+/-- A proof of `a = b` for two propositions (or terms) that differ only in subterms that are
+    definitionally equal once everything is unfolded, which is what two spellings of one numeral
+    are (`0 / 1` and `0`). `none` when they cannot be reconciled.
 
-/-- The children of the nested applications of kind `k` in `t`, in order. -/
-partial def flattenKind (k : cvc5.Kind) (t : cvc5.Term) : Array cvc5.Term :=
-  if t.getKind! == k then t.getChildren.flatMap (flattenKind k) else #[t]
-
-/-- Carcara's `polyeq`: are `a` and `b` the same term up to the orientation of equalities, the
-    regrouping of associative applications, the names of bound variables, and the spelling of
-    numerals (`0.0`, `0/1`, `(- 0)`, `(to_real 0)`)? -/
-partial def polyeq (a b : cvc5.Term) : Bool := go [] a b
-where
-  /-- `bound` pairs the variables bound so far in `a` with those bound in `b`, innermost first. -/
-  go (bound : List (cvc5.Term × cvc5.Term)) (a b : cvc5.Term) : Bool := Id.run do
-    -- a syntactically equal pair is equal, unless it mentions bound variables that were paired
-    -- with something else
-    if bound.isEmpty && a == b then return true
-    -- numerals, by value
-    if let some x := constValue? a then
-      if let some y := constValue? b then
-        return x == y
-    let ka := a.getKind!
-    let kb := b.getKind!
-    -- bound variables, by position
-    if ka == .VARIABLE || kb == .VARIABLE then
-      return match bound.find? (fun (x, y) => x == a || y == b) with
-        | some (x, y) => x == a && y == b
-        | none => a == b
-    if ka != kb then return false
-    let n := a.getNumChildren
-    if n == 0 then return a == b
-    if a.hasOp && b.hasOp && a.getOp! != b.getOp! then return false
-    -- binders: pair the variables, compare the bodies
-    if binderKinds.contains ka then
-      if n != b.getNumChildren then return false
-      let xs := a[0]!.getChildren
-      let ys := b[0]!.getChildren
-      if xs.size != ys.size then return false
-      for x in xs, y in ys do
-        if x.getSort! != y.getSort! then return false
-      let bound := (xs.zip ys).toList.reverse ++ bound
-      for i in [1:n] do
-        if !go bound a[i]! b[i]! then return false
-      return true
-    -- equalities, in either orientation
-    if ka == .EQUAL && n == 2 && b.getNumChildren == 2 then
-      return (go bound a[0]! b[0]! && go bound a[1]! b[1]!)
-          || (go bound a[0]! b[1]! && go bound a[1]! b[0]!)
-    -- applications: childwise, else after flattening an associative kind
-    if n == b.getNumChildren then
-      let mut eq := true
-      for i in [0:n] do
-        if !go bound a[i]! b[i]! then
-          eq := false
-          break
-      if eq then return true
-    if assocKinds.contains ka then
-      let as := flattenKind ka a
-      let bs := flattenKind ka b
-      if as.size == bs.size && (as.size != n || bs.size != b.getNumChildren) then
-        for x in as, y in bs do
-          if !go bound x y then return false
-        return true
-    return false
-
-/-- A proof of `a = b` for two propositions (or terms) that differ only in the orientation of
-    equalities, the names of bound variables, and subterms that are definitionally equal once
-    everything is unfolded (numerals: `0 / 1` and `0`). `none` when they cannot be reconciled;
-    in particular a regrouped `∧`-chain is not handled.
-
-    The proof is by congruence, one differing argument at a time, with `eq_symm_eq` for flipped
-    equalities, `forall_congr` / `implies_congr` / `funext` under binders, and `Eq.refl` (checked
-    by the kernel, which unfolds everything) at the leaves. -/
+    The proof is by congruence, one differing argument at a time, `forall_congr` /
+    `implies_congr` / `funext` under binders, and `Eq.refl` (checked by the kernel, which unfolds
+    everything) at the leaves. -/
 partial def polyeqProof? (a b : Expr) : MetaM (Option Expr) := do
   let some h ← go a b | return none
   return some (← mkExpectedTypeHint h (← mkEq a b))
@@ -136,14 +86,7 @@ where
     let as := a.getAppArgs
     let bs := b.getAppArgs
     if f != b.getAppFn || as.size != bs.size then return none
-    if let some h ← goArgs f as bs then return some h
-    -- `(x = y) = (y = x) = (u = v)`
-    if let some (α, x, y) := a.eq? then
-      if b.isEq then
-        if let some h ← goArgs f #[α, y, x] bs then
-          let hflip := mkApp3 (mkConst ``eq_symm_eq [← getLevel α]) α x y
-          return some (← mkEqTrans hflip h)
-    return none
+    goArgs f as bs
 
   /-- `f as = f bs`, replacing one argument at a time. -/
   goArgs (f : Expr) (as bs : Array Expr) : MetaM (Option Expr) := do

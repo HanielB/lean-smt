@@ -563,10 +563,10 @@ def runAssumeCore (id : String) (t : cvc5.Term) : AletheM Unit := do
     match ← findAssumWithType? p with
     | some h => registerPremise { id, lits := #[t], concl := p, proof := h }
     | none =>
-      -- the same assertion up to representation, as Carcara accepts it (`polyeq`): equalities in
-      -- either orientation, bound variables renamed, numerals spelled differently (cvc5 prints
-      -- the problem's `0.0` as `0/1`). Keep the proof's view of the term, and prove it from the
-      -- assertion's
+      -- the same assertion up to the spelling of numerals, the one difference Carcara's `polyeq`
+      -- pass cannot remove: it identifies numerals by value, so the problem's `0.0` and the
+      -- proof's `0/1` are one term to it and nothing is elaborated, while cvc5's parser gives the
+      -- checker two. Keep the proof's view of the term, and prove it from the assertion's
       let t₀ ← IO.monoNanosNow
       let matched := st.asserts.find? fun (ta, _, _) => polyeq t ta
       let t₁ ← IO.monoNanosNow

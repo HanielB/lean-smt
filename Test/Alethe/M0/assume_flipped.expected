@@ -1,0 +1,2 @@
+Test/Alethe/M0/assume_flipped.lean:5:0: error: assumption 'a0' is not an assertion of the problem:
+  (= y 0.0)
