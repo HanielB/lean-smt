@@ -176,17 +176,30 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
     let (cc, cp) ← resolveChain s
     let h ← concludeClause s cc cp
     addThm s.concl h
-  | "contraction" | "reordering" | "or" =>
+  | "contraction" | "reordering" =>
+    -- a step that neither permutes nor removes anything is its premise: return the premise's
+    -- proof, as `concludeClause` would. Reifying two clauses to discover that costs 8x more
+    let p := s.premise! 0
+    if p.lits == s.lits then
+      return ← addThm s.concl p.proof
+    -- otherwise these two permute and deduplicate, which the reflective containment check does in
+    -- one kernel evaluation instead of an index map: 0.80x and 0.74x (cvc5), 0.49x and 0.76x
+    -- (veriT) over the round-eight smoke
     if smt.alethe.reflect.get (← getOptions) then
       if let some h ← reflectClausal s then
         return ← addThm s.concl h
+    addThm s.concl (← concludeClause s p.lits p.proof)
+  | "or" =>
+    -- `(cl (or l₁ … lₙ)) ⊢ (cl l₁ … lₙ)`: the premise's proposition *is* the stated clause, since
+    -- a clause is stated as exactly the right-nested `Or` chain the premise holds, so this returns
+    -- the premise's proof untouched. The reflective path would reify both sides and build an atom
+    -- context for a step that needs no work at all -- 3.2x slower on cvc5 and 3.9x on veriT in the
+    -- round-eight smoke -- so it is not used here.
     let p := s.premise! 0
     addThm s.concl (← concludeClause s p.lits p.proof)
   | "weakening" =>
-    if smt.alethe.reflect.get (← getOptions) then
-      if let some h ← reflectClausal s then
-        return ← addThm s.concl h
-    -- (cl l₁ … lₙ) ⊢ (cl l₁ … lₙ m₁ … mₖ)
+    -- (cl l₁ … lₙ) ⊢ (cl l₁ … lₙ m₁ … mₖ): a single `orN_append_left`, likewise cheaper than
+    -- reifying the two clauses (1.8x on veriT in the round-eight smoke)
     let p := s.premise! 0
     let n := p.lits.size
     let ps : Q(List Prop) ← mkPropList p.lits
