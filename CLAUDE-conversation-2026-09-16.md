@@ -102,3 +102,123 @@ Whole-proof wall barely moves at the median, 0.987 and 0.992, because the fixed 
 **Locally** there were two stray pollers. One, `sleep 1500`, belongs to that same other session and is watching its `holes` jobs. The other was mine: the waiter I started to tell me when the smoke drained. It should have exited when the queue emptied, but the ssh control socket broke during one poll, my fallback treated that as "still running", and it kept looping every five minutes over jobs that had already finished. I've killed it. The three Lean processes are your editor's language server, running for fourteen hours.
 
 One housekeeping point: the date rolled over while we worked. I have been appending to `CLAUDE-conversation-2026-09-15.md`, but you have `CLAUDE-conversation-2026-09-16.md` open, and it already exists with content that isn't mine. The last three entries I wrote — the deploy and verification, the smoke submission, and the smoke results — are all dated today but sit in yesterday's file. Do you want me to move those three into today's file, or leave them where they are and start using the 16th from here on?
+
+## Turn: 2026-09-16 09:20:39 (session 6cc35fc7)
+
+Moved, but only one entry needed it, and I owe you a correction on what I said before.
+
+The commit timestamps settle it. The deploy, the verification, and the smoke submission were written at 22:46, 23:02 and 23:08 on the 15th, so they are correctly filed. Only the smoke-results entry, written at 06:58, belonged to the 16th. I told you all three were dated today, which was wrong.
+
+I was also wrong that today's file held content that wasn't mine. It is mine. My final replies to you are appended to the day's file automatically, so the 16th already had the smoke-results reply from 06:58 and the running-tasks reply from 09:19. What I moved is the separate hand-written technical entry, which is more detailed than the reply and is now at the top of the file, ahead of those two.
+
+The 15th's file ends where it should, with the smoke submission. Today's file now runs to 104 lines across three entries.
+
+Nothing else changed, and the full-round dry run is still staged for your approval.
+
+## Turn: 2026-09-16 09:37:45 (session 6cc35fc7)
+
+Fixed now, in `f1d6a7f`. And chasing it turned up a second case I had not seen.
+
+`or` and `weakening` go back to their direct paths, which were already optimal. But the synthetic sweep showed a `contraction` or `reordering` step whose premise is literally its conclusion is **8× slower** reflectively — the same degenerate shape, since reifying two clauses just to discover they match is wasted. Those now return the premise's proof before any reification, which is what the old code did anyway.
+
+On 400 steps of each rule at width 8, reflect on against off:
+
+| rule | before the fix | now |
+|---|---|---|
+| `or` | 4.26× | **0.99** |
+| `weakening` | 1.82× | **0.98** |
+| `contraction` | 8.05× (degenerate) | **0.95** |
+| `reordering` | 0.66 | **0.67** |
+
+Resolution is untouched at 0.81 s against 1.98 s on the profiled proof, so the win that motivated the whole thing is intact. `lake test` passes 149, and all 47 Alethe tests give identical output with the option on.
+
+Worth saying plainly: my original local A/B could not have caught either of these. That proof contains no `or`, `weakening`, `contraction` or `reordering` steps at all, so I measured a rule set that excluded every rule that regressed. The smoke pass found the first case and a purpose-built synthetic found the second.
+
+This changes what is deployed. `runs/alethe-lean8` carries the oleans without this fix, and the staged full-round dry run would run that. Three options: redeploy and re-smoke, which is the cautious path and costs a few hours; redeploy and go straight to the full round, since the change only removes rules from the new path and restores behavior that seven rounds have exercised; or run the full round as deployed and keep this for round nine. I lean toward the middle one, but the choice is yours.
+
+## Turn: 2026-09-16 10:53:17 (session 6cc35fc7)
+
+Both changes are in and verified locally. The redeploy is staged.
+
+**The reordering pass.** Carcara's own default pipeline has always ended with it; ours had simply omitted it. It removes `reordering` steps and recomputes the conclusions of the order-sensitive rules, which is sound for us because the checker treats clauses as sets, so those steps were pure cost. On a QF_UF hardware proof:
+
+| | without | with |
+|---|---|---|
+| elaborated steps | 1,862 | 1,755 |
+| `reordering` steps | 107 | 0 |
+| lean-smt rule time | 1.266 s | **1.040 s** |
+| `contraction` | 0.050 s | 0.018 s |
+
+Carcara still checks the elaborated proof valid, and lean-smt validates it with no trusted step. `contraction` improves as a side effect, since it no longer sees permuted clauses.
+
+One caveat about the four proofs I had been using to test: they contain no `reordering` steps at all, so I had to generate a resolution-heavy QF_UF proof to see the pass do anything. That is the same blind spot that hid the `or` regression, and it is worth remembering when reading round eight: **elaborated step counts will be lower than round seven's**, so per-proof step counts are not comparable across the two rounds, though per-rule times still are.
+
+**Staged**:
+
+```
+bash /home/hbarbosa/exp/alethe-lean/redeploy-alethe-lean8b.sh
+```
+
+It uploads the new runner and the `f1d6a7f` oleans over `runs/alethe-lean8`, leaving Carcara, cvc5, veriT, the sets and the rewrites file untouched, then runs both solvers through all five arms on three small benchmarks and finishes by dry-running the full driver. I folded that dry run in because only the smoke driver had been previewed, and it submits nothing.
+
+Once that comes back clean I'll stage the full submission itself: the twelve sets, 23,328 benchmarks per solver, into `cvc5-8` and `verit-8`.
+
+## Turn: 2026-09-16 (session 6cc35fc7) — the or/weakening fix and the reordering pass
+
+**`f1d6a7f` — only the clausal rules that gain go through the reflective
+checker.** `or` and `weakening` keep their direct paths, which already did
+essentially no work. Chasing it turned up a second case the smoke could not
+separate: a `contraction`/`reordering` step whose premise *is* its conclusion
+was 8x reflectively, so those now return the premise's proof before any
+reification (what `concludeClause` did for them anyway). Synthetic sweep, 400
+steps of each rule at width 8, reflect on against off:
+
+| rule | before | after |
+|---|---|---|
+| `or` | 4.26x | **0.99** |
+| `weakening` | 1.82x | **0.98** |
+| `contraction` (degenerate) | 8.05x | **0.95** |
+| `reordering` | 0.66 | **0.67** |
+
+Resolution on the profiled proof stays 0.81 s against 1.98 s. `lake test`
+149; 47/47 Alethe tests unchanged with the option on.
+
+Worth recording: my original local A/B could not have caught either
+regression. That proof contains no `or`, `weakening`, `contraction` or
+`reordering` steps at all, so I had measured a rule set that excluded every
+rule that regressed. The smoke found the first, a purpose-built synthetic the
+second.
+
+**The `reordering` elaboration pass, at Haniel's direction.** The pipeline
+becomes `polyeq local core-simp-rare budget reordering`. Carcara's own
+default pipeline has always ended with this pass; ours had omitted it. It
+removes `reordering` steps and recomputes the conclusions of the
+order-sensitive rules, which is sound for our consumer because it checks
+clauses as sets. Measured on a QF_UF hwbench proof (Vlunc_ab_cti_max, cvc5),
+the only local proof I had with any reordering steps:
+
+| | without | with |
+|---|---|---|
+| elaborated steps | 1,862 | 1,755 |
+| `reordering` | 107 | 0 |
+| lean-smt rule time | 1.266 s | 1.040 s |
+| `contraction` | 0.050 s | 0.018 s |
+
+carcara checks the elaborated proof valid either way, and lean-smt validates
+both with no trusted step. Note for reading round eight: **elaborated step
+counts are lower than round seven's**, so per-proof step counts do not
+compare across the rounds; per-rule times still do.
+
+The same blind spot bit twice here — the four Dartagnan proofs I had been
+testing on contain no reordering steps either, so the pass looked like a
+no-op until I generated a resolution-heavy QF_UF proof.
+
+**Redeploy** (approved, `redeploy-alethe-lean8b.sh`): run-arms.sh md5
+`8b9aec5f…` with the new pipeline, oleans at f1d6a7f, everything else
+untouched. Six end-to-end head-node runs all valid with no trusted step, and
+the elaborated UF sledgehammer proof is 20 steps where it was 21 — the pass
+visibly active. Full driver dry run in the same chain: 24 arrays, 46,656
+tasks, octa, wall 3000 s, memlimit 12000MB, into cvc5-8/verit-8, nothing
+submitted.
+
+Staged: the full submission.
