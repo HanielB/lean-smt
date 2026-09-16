@@ -23,6 +23,10 @@ public meta section
 
 n-ary resolution driven by the pivots Carcara writes as `:args`, and the normalization fix-up
 that reconciles a computed clause with the stated one (permutations, duplicates, flattening).
+
+Clauses are sets here, so only Alethe's set-semantics `resolution` is reconstructed. Its
+multiset-and-position variant `strict_resolution` is not: neither solver emits it in any corpus
+the evaluation covers, and this checker would have accepted it on the weaker reading anyway.
 -/
 
 namespace Smt.Alethe
@@ -162,7 +166,7 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
 
 @[alethe_rule_reconstruct] def reconstructClausal : RuleReconstructor := fun s => do
   match s.rule with
-  | "resolution" | "strict_resolution" =>
+  | "resolution" =>
     -- Carcara's special case: the empty clause from the single premise `(cl (not true))`
     if s.lits.isEmpty && s.premises.size == 1 then
       let p := s.premise! 0
