@@ -162,7 +162,7 @@ def concludeClause (s : Step) (cc : Array cvc5.Term) (cp : Expr) : ReconstructM 
 
 @[alethe_rule_reconstruct] def reconstructClausal : RuleReconstructor := fun s => do
   match s.rule with
-  | "resolution" | "th_resolution" | "strict_resolution" =>
+  | "resolution" | "strict_resolution" =>
     -- Carcara's special case: the empty clause from the single premise `(cl (not true))`
     if s.lits.isEmpty && s.premises.size == 1 then
       let p := s.premise! 0

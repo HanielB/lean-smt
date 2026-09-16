@@ -85,42 +85,12 @@ def reconstructConnectiveDef (s : Step) : ReconstructM Expr := do
   | .FORALL | .EXISTS => addTac s.concl closeQuantDuality
   | _ => throwError "{s.rule}: unsupported shape {t}"
 
-/-- The Boolean arguments of uninterpreted applications in `e` (other than `true`/`false`, and
-    not under binders): the atoms the application form of `bfun_elim` case-splits on. -/
-partial def bfunAtoms (e : Expr) (acc : Array Expr) : MetaM (Array Expr) := do
-  match e with
-  | .app .. =>
-    let f := e.getAppFn
-    let args := e.getAppArgs
-    let mut acc := acc
-    for a in args do
-      acc ← bfunAtoms a acc
-    if f.isFVar then
-      for a in args do
-        if !(a.isConstOf ``True || a.isConstOf ``False) && !a.hasLooseBVars && (← Meta.isProp a) then
-          if !acc.contains a then acc := acc.push a
-    return acc
-  | .mdata _ b => bfunAtoms b acc
-  | .proj _ _ b => bfunAtoms b acc
-  | _ => return acc
-
 @[alethe_rule_reconstruct] def reconstructProp : RuleReconstructor := fun s => do
   match s.rule with
-  | "bfun_elim" =>
-    -- the application form (Carcara's core pass reduces the quantifier form): `f … b …` becomes
-    -- `ite b (f … true …) (f … false …)` throughout the premise
-    let pr := s.premise! 0
-    if pr.lits.size != 1 || s.lits.size != 1 then throwError "bfun_elim: expected unit clauses"
-    let phi ← reconstructTerm pr.lits[0]!
-    let psi ← reconstructTerm s.lits[0]!
-    let atoms ← bfunAtoms phi #[]
-    if atoms.size > 8 then throwError "bfun_elim: {atoms.size} Boolean arguments to split on"
-    let heq ← addTac (← Meta.mkEq phi psi) fun mv => proveByCases mv atoms.toList #[]
-    addThm s.concl (← Meta.mkAppM ``Eq.mp #[heq, pr.proof])
   | "connective_def" | "qnt_duality" => reconstructConnectiveDef s
   | "ite_then_intro" | "ite_else_intro" =>
     -- (cl (not c) (= (ite c t e) t)) and (cl c (= (ite c t e) e)): the selection axioms the core
-    -- pass uses for `ite_intro` and for the `ite` form of `bfun_elim`
+    -- pass uses for `ite_intro`
     if s.lits.size != 2 then throwError "{s.rule}: expected two literals"
     let eq ← reconstructTerm s.lits[1]!
     let some (_, lhs, _) := eq.eq? | throwError "{s.rule}: {s.lits[1]!} is not an equality"

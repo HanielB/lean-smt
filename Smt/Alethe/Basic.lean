@@ -96,9 +96,8 @@ def decideProofOfNative (p : Q(Prop)) (hp : Q(Decidable $p)) : ReconstructM Q($p
   if ← useNative then nativeDecideProof p hp else decideProof p hp
 
 /-- Close a goal that holds for either truth value of each of `atoms`, by splitting on them
-    classically and simplifying with the resulting hypotheses. Used by `bfun_elim`, whose two
-    sides differ only in how a Boolean argument is placed, and by `evaluate` on a term with an
-    opaque Boolean atom, which `decide` cannot run on. -/
+    classically and simplifying with the resulting hypotheses. Used by `evaluate` on a term with
+    an opaque Boolean atom, which `decide` cannot run on. -/
 partial def proveByCases (mv : MVarId) (atoms : List Expr) (hyps : Array Expr) : MetaM Unit := do
   match atoms with
   | [] =>
