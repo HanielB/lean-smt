@@ -1,0 +1,4 @@
+holey: checked 5 steps, trusted 1 (distinct_elim: 1), holes 0
+  t1 (distinct_elim): distinct_elim: the conclusion is not the canonical elimination -- it has ¬c1 =
+    c0 where the pairs of (distinct c0 c1 c2) in order give c0 ≠
+  c1. Carcara's polyeq pass canonicalizes this; the checker does not reconcile it.

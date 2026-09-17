@@ -150,46 +150,6 @@ partial def transportEq (eqs : Array (Expr × Expr × Expr)) (l r : Expr) : Meta
     Meta.mkCongr (← transportEq eqs f g) (← transportEq eqs x y)
   | _, _ => throwError "cong: cannot align{indentExpr l}\nwith{indentExpr r}"
 
-/-- `l = r` for two conjunctions of disequalities that agree pairwise up to the orientation of
-    each disequality (`x ≠ y` vs `y ≠ x`), by congruence on the `∧`-chain with `ne_symm_eq` at the
-    flipped leaves. `none` when the two are not aligned this way (a genuine reordering), leaving
-    the quadratic pairwise conversion as the fallback. -/
-partial def distinctCongEq (a b : Expr) : MetaM (Option Expr) := do
-  if a == b then return some (← Meta.mkEqRefl a)
-  let pairOf (e : Expr) : Option (Expr × Expr) :=
-    match e.ne? with
-    | some (_, x, y) => some (x, y)
-    | none => match e.not? >>= Expr.eq? with
-      | some (_, x, y) => some (x, y)
-      | none => none
-  let leafEq (x y : Expr) : MetaM (Option Expr) := do
-    if x == y then return some (← Meta.mkEqRefl x)
-    match pairOf x, pairOf y with
-    | some (p, q), some (u, v) =>
-      if p == u && q == v then
-        -- the same disequality in two spellings: `buildDistinct` writes `Ne p q` for a
-        -- `distinct` argument pair, while the proof writes `(not (= p q))`, which reconstructs
-        -- as `¬(p = q)`. `Ne` is a definition, so the two propositions are definitionally equal
-        -- and their equality is `rfl` -- one delta step for the kernel, per leaf. Comparing the
-        -- *pairs* rather than the propositions is what makes this case visible at all: on the
-        -- ESC-Java `distinct`s over 148 constants every leaf is of this shape, and testing the
-        -- propositions syntactically rejected the first one and sent a 10,878-conjunct step down
-        -- the quadratic path below
-        return some (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl x) (← Meta.mkEq x y))
-      if p == v && q == u then
-        let α ← Meta.inferType p
-        let lvl ← Meta.getLevel α
-        return some (mkApp3 (mkConst ``ne_symm_eq [lvl]) α p q)
-      return none
-    | _, _ => return none
-  match a.and?, b.and? with
-  | some (la, lb), some (ra, rb) =>
-    let some ha ← leafEq la ra | return none
-    let some hb ← distinctCongEq lb rb | return none
-    return some (← Meta.mkCongr (← Meta.mkCongrArg (mkConst ``And) ha) hb)
-  | none, none => leafEq a b
-  | _, _ => return none
-
 /-- `f(l₁ … lₙ) = f(r₁ … rₙ)` from `hs : lᵢ = rᵢ` for reconstructions that are not applications of
     a function to the arguments (n-ary `distinct`, whose reconstruction is a conjunction of
     pairwise disequalities): transport the changed arguments through that structure. -/
@@ -463,58 +423,37 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
         let (c₂, _) ← c.proj (n - 1)
         Meta.mkLambdaFVars #[h] (← Meta.mkAppM ``distinct_bool_false #[c₀, c₁, c₂])
       return ← addThm s.concl (← Meta.mkAppM ``eq_false #[h])
-    if ← Meta.isDefEq le re then return ← addThm s.concl (← mkRefl l)
+    -- Otherwise the conclusion must be the *canonical* elimination: the argument pairs in
+    -- lexicographic order, each written in that order. A producer may flip some of them -- the
+    -- rule admits either orientation -- but Carcara's `polyeq` pass eliminates that
+    -- polyequality, rewriting such a step to conclude the canonical form and bridging to the
+    -- stated one, so what reaches the checker is canonical. Anything else is refused rather
+    -- than reconciled: reconciling two conjunctions of n(n-1)/2 conjuncts is what the flipped
+    -- case used to cost, 73 s on one ESC-Java step over 148 constants.
+    --
+    -- Canonical, the two sides differ only in spelling -- `Ne p q` from the reconstruction of
+    -- `distinct` against `¬(p = q)` from `(not (= p q))` -- so the whole equality is one
+    -- ascribed `Eq.refl`, which the kernel checks in a single pass with a delta step per
+    -- conjunct: 46 ms at 10,878 conjuncts.
     let pairOf (e : Expr) : Option (Expr × Expr) :=
       match e.ne? with
       | some (_, a, b) => some (a, b)
       | none => match e.not? >>= Expr.eq? with
         | some (_, a, b) => some (a, b)
         | none => none
-    -- fast path: the two conjunctions have the same pairs in the same positions, differing only
-    -- in the orientation of some disequalities (Carcara's `polyeq` canonicalizes `(= a b)` vs
-    -- `(= b a)`). Prove `le = re` by congruence on the `∧`-chain — O(#pairs) proof nodes — instead
-    -- of the pairwise conversion below, which embeds the whole conjunct list in each `and_elim`
-    -- and so is quadratic in the term (out of memory on the large `distinct`s of ESC-Java proofs).
-    if let some h ← distinctCongEq le re then
-      return ← addThm s.concl h
     let ls ← collectPropsInAndChain le
     let rs ← collectPropsInAndChain re
-    -- from `h : andN src` prove `andN tgt`, pairing each target conjunct with a source one.
-    -- The projections share one chain: a `distinct` over n arguments has n(n-1)/2 conjuncts
-    -- and every one of them is projected, so a chain per conjunct would be quartic in n (it
-    -- was, and ran out of memory on the ESC-Java proofs).
-    -- the source conjuncts indexed by their unordered pair, so that pairing a target conjunct
-    -- with its source is a lookup. Scanning `src` per target was quadratic in the conjunct count,
-    -- which on the ESC-Java `distinct`s over 148 constants is 10,878: ~59 million expression
-    -- comparisons, 73 s for one step
-    let indexPairs (src : List Expr) : ReconstructM (Std.HashMap (Expr × Expr) Nat) := do
-      let mut m := {}
-      for (e, i) in src.zipIdx do
-        let some (a, b) := pairOf e | throwError "distinct_elim: unexpected conjunct {e}"
-        m := m.insertIfNew (a, b) i
-        m := m.insertIfNew (b, a) i
-      return m
-    let convert (src tgt : List Expr) (sty : Expr) (h : Expr) : ReconstructM Expr := do
-      let byPair ← indexPairs src
-      let srcArr := src.toArray
-      let mut c := Prop.ProjChain.of .and h sty src.length
-      let mut proofs := #[]
-      for t in tgt do
-        let some (a, b) := pairOf t | throwError "distinct_elim: unexpected conjunct {t}"
-        let some i := byPair[(a, b)]? | throwError "distinct_elim: no pair for {t}"
-        let (pr, c') ← c.proj i
-        c := c'
-        let some (c₀, _) := pairOf srcArr[i]! | unreachable!
-        let pr' ← if c₀ == a then pure pr else Meta.mkAppM ``Ne.symm #[pr]
-        proofs := proofs.push pr'
-      -- andN tgt as a right-nested conjunction
-      let mut acc := proofs.back!
-      for pr in proofs.pop.reverse do
-        acc ← Meta.mkAppM ``And.intro #[pr, acc]
-      return acc
-    let mp ← Meta.withLocalDeclD `h le fun h => do Meta.mkLambdaFVars #[h] (← convert ls rs le h)
-    let mpr ← Meta.withLocalDeclD `h re fun h => do Meta.mkLambdaFVars #[h] (← convert rs ls re h)
-    addThm s.concl (← Meta.mkAppM ``propext #[← Meta.mkAppM ``Iff.intro #[mp, mpr]])
+    if ls.length != rs.length then
+      throwError "distinct_elim: the conclusion has {rs.length} conjuncts, the elimination of \
+                  {l} has {ls.length}"
+    for (a, b) in ls.zip rs do
+      let some (p, q) := pairOf a | throwError "distinct_elim: unexpected conjunct {a}"
+      let some (u, v) := pairOf b | throwError "distinct_elim: unexpected conjunct {b}"
+      unless p == u && q == v do
+        throwError "distinct_elim: the conclusion is not the canonical elimination -- it has \
+                    {b} where the pairs of {l} in order give {a}. Carcara's polyeq pass \
+                    canonicalizes this; the checker does not reconcile it."
+    addThm s.concl (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl le) (← Meta.mkEq le re))
   | "semilattice_simp" =>
     -- One `∧`/`∨` layer normalized by the verified `AciNorm` normalizer (kernel evaluation):
     -- associativity, commutativity, idempotence, the neutral element and the annihilator of the

@@ -1,0 +1,8 @@
+(assume a0 (distinct c0 c1 c2))
+(assume a1 (= c0 c2))
+(step t1 (cl (= (distinct c0 c1 c2) (and (not (= c1 c0)) (not (= c2 c0)) (not (= c2 c1))))) :rule distinct_elim)
+(step t2 (cl (not (distinct c0 c1 c2)) (and (not (= c1 c0)) (not (= c2 c0)) (not (= c2 c1)))) :rule equiv1 :premises (t1))
+(step t3 (cl (and (not (= c1 c0)) (not (= c2 c0)) (not (= c2 c1)))) :rule resolution :premises (t2 a0) :args ((distinct c0 c1 c2) true))
+(step t4 (cl (not (= c2 c0))) :rule and :premises (t3) :args (1))
+(step t5 (cl (not (= c0 c2))) :rule not_symm :premises (t4))
+(step t6 (cl) :rule resolution :premises (t5 a1) :args ((= c0 c2) true))
