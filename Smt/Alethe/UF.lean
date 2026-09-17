@@ -166,6 +166,16 @@ partial def distinctCongEq (a b : Expr) : MetaM (Option Expr) := do
     if x == y then return some (← Meta.mkEqRefl x)
     match pairOf x, pairOf y with
     | some (p, q), some (u, v) =>
+      if p == u && q == v then
+        -- the same disequality in two spellings: `buildDistinct` writes `Ne p q` for a
+        -- `distinct` argument pair, while the proof writes `(not (= p q))`, which reconstructs
+        -- as `¬(p = q)`. `Ne` is a definition, so the two propositions are definitionally equal
+        -- and their equality is `rfl` -- one delta step for the kernel, per leaf. Comparing the
+        -- *pairs* rather than the propositions is what makes this case visible at all: on the
+        -- ESC-Java `distinct`s over 148 constants every leaf is of this shape, and testing the
+        -- propositions syntactically rejected the first one and sent a 10,878-conjunct step down
+        -- the quadratic path below
+        return some (← Meta.mkExpectedTypeHint (← Meta.mkEqRefl x) (← Meta.mkEq x y))
       if p == v && q == u then
         let α ← Meta.inferType p
         let lvl ← Meta.getLevel α
