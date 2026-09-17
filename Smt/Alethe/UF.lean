@@ -483,17 +483,28 @@ def reconstructEqCongruent (s : Step) (pred : Bool) : ReconstructM Expr := do
     -- The projections share one chain: a `distinct` over n arguments has n(n-1)/2 conjuncts
     -- and every one of them is projected, so a chain per conjunct would be quartic in n (it
     -- was, and ran out of memory on the ESC-Java proofs).
+    -- the source conjuncts indexed by their unordered pair, so that pairing a target conjunct
+    -- with its source is a lookup. Scanning `src` per target was quadratic in the conjunct count,
+    -- which on the ESC-Java `distinct`s over 148 constants is 10,878: ~59 million expression
+    -- comparisons, 73 s for one step
+    let indexPairs (src : List Expr) : ReconstructM (Std.HashMap (Expr × Expr) Nat) := do
+      let mut m := {}
+      for (e, i) in src.zipIdx do
+        let some (a, b) := pairOf e | throwError "distinct_elim: unexpected conjunct {e}"
+        m := m.insertIfNew (a, b) i
+        m := m.insertIfNew (b, a) i
+      return m
     let convert (src tgt : List Expr) (sty : Expr) (h : Expr) : ReconstructM Expr := do
+      let byPair ← indexPairs src
+      let srcArr := src.toArray
       let mut c := Prop.ProjChain.of .and h sty src.length
       let mut proofs := #[]
       for t in tgt do
         let some (a, b) := pairOf t | throwError "distinct_elim: unexpected conjunct {t}"
-        let some i := src.findIdx? (fun e => match pairOf e with
-            | some (c, d) => (c == a && d == b) || (c == b && d == a)
-            | none => false) | throwError "distinct_elim: no pair for {t}"
+        let some i := byPair[(a, b)]? | throwError "distinct_elim: no pair for {t}"
         let (pr, c') ← c.proj i
         c := c'
-        let some (c₀, _) := pairOf src[i]! | unreachable!
+        let some (c₀, _) := pairOf srcArr[i]! | unreachable!
         let pr' ← if c₀ == a then pure pr else Meta.mkAppM ``Ne.symm #[pr]
         proofs := proofs.push pr'
       -- andN tgt as a right-nested conjunction
