@@ -777,7 +777,19 @@ On the proofs both rounds validate the rule's total falls from 87.4 to 36.8 CPU
 hours for \cvcv and from 73.3 to 27.3 for \verit, and the checker's whole rule
 time from 132.4 to 77.8 and from 138.2 to 87.7 hours --- with the verdicts
 unchanged, no proof going from validated to holey, and the newly validated
-proofs those the old shape ran out of time on. The same containment check
+proofs those the old shape ran out of time on.
+
+Those totals and the figure measure different populations, and the gap between
+them is the point. The median proof of the round has 36 (\cvcv) and 79 (\verit)
+\rulename{resolution} steps, too few to amortize the fixed cost of reifying the
+clauses and building the atom context, and it gains 12\% and 17\%: that is what
+the figure's box reports. But the heaviest tenth of the proofs hold 87\% of all
+\rulename{resolution} time and run 2.6 and 2.9 times faster, which is what the
+totals report. The step counts are the same in both rounds to within two steps
+of six million, so none of this is fewer steps. Coverage follows the tail rather
+than the median --- the timeouts are exactly the proofs the tail is made of ---
+which is why the round's whole-proof medians barely move while 628 and 823
+proofs cross from timeout to validated. The same containment check
 serves \rulename{contraction}, which falls to 0.19 and 0.33 of its previous
 cost. It does \emph{not} serve every clausal rule: \rulename{or} and
 \rulename{weakening} were measured 3 to 4 times slower through it, because
