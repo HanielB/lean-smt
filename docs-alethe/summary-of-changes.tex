@@ -155,22 +155,22 @@ that is every \file{Lemmas.lean}, every \file{Rewrites.lean} and
     \toprule
     Part & Files & Lines \\
     \midrule
-    \alethe parser & \file{Syntax}, \file{Parser}, \file{Realize} (3 new) & 946 \\
+    \alethe parser & \file{Syntax}, \file{Parser}, \file{Realize} (3 new) & 952 \\
     Rule reconstruction & \file{Basic}, \file{Clause}, \file{Prop}, \file{Arith}, \file{UF}, \file{Quant}, \file{Polyeq}, \file{Lemmas}, \file{Rare}, \file{Rare/Basic} (10 new) & 3\,160 \\
-    Generated RARE table & \file{Rare/Rules.lean} (1 new; generator \file{gen.py} 445, input \file{rewrites.eo} 513) & 1\,380 \\
+    Generated RARE table & \file{Rare/Rules.lean} (1 new; generator \file{gen.py} 445, input \file{rewrites.eo} 513) & 1\,379 \\
     Driver, frontend, tactic & \file{Reconstruct}, \file{Frontend}, \file{Command}, \file{Tactic}, \file{Alethe.lean} (5 new) & 1\,381 \\
     New verified modules in the existing tree & \file{Prop/AciNorm} 461, \file{Prop/Proj} 239, \file{Prop/ResNorm} 397 (3 new) & 1\,097 \\
-    Changes to pre-existing library files & 11 modified & $+1\,361$ / $-791$ \\
+    Changes to pre-existing library files & 13 modified & $+1\,389$ / $-791$ \\
     Registration & \file{Smt.lean}, \file{Attribute.lean}, \file{Options.lean} (3 modified) & $+8$ \\
     \midrule
     Tests & \file{Test/Alethe}: 48 test files over 94 problem and proof files & 256 + 15\,037 \\
     Unit tests & \file{Test/Unit/AciNorm}, \file{Test/Unit/ResNorm} (2 new) & 126 \\
-    Scripts & \file{check-alethe.sh}, \file{setup-alethe.sh}, \file{rule-boxplots.py} (3 new) & 636 \\
-    Report and notes & \file{docs-alethe/}: \TeX{} 1\,246, Markdown 606, plus figures and CSVs & \\
+    Scripts & \file{check-alethe.sh}, \file{setup-alethe.sh}, \file{rule-boxplots.py} (3 new) & 657 \\
+    Report and notes & \file{docs-alethe/}: \TeX{} 2\,071, Markdown 606, plus figures and CSVs & \\
     \bottomrule
   \end{tabularx}
   \caption{Size of each part of the branch. Lines are lines of \lean unless
-    stated otherwise. The 104 commits are on top of \code{76b4eea}.}
+    stated otherwise. The 124 commits are on top of \code{76b4eea}.}
   \label{tab:sizes}
 \end{table}
 
@@ -417,8 +417,14 @@ expression and applies the soundness theorem as a term.
   accelerated operations; the pivots are hints, so a wrong one fails only at
   the final containment. It depends on \code{propext} and \code{Quot.sound}
   only. Used by the \alethe clausal rules behind the option
-  \code{smt.alethe.reflect}, default off; the \cvcv path does not use it
-  yet.
+  \code{smt.alethe.reflect}, default off in the library and set by the
+  evaluation's runner; the \cvcv path does not use it yet. It carries
+  \code{resolution} and the \code{contraction}/\code{reordering} steps that
+  really permute or deduplicate. It does \emph{not} carry \code{or} and
+  \code{weakening}, nor a \code{contraction} whose premise is already its
+  conclusion: those paths do essentially no work already --- for \code{or} the
+  premise's proposition \emph{is} the stated clause --- and reifying two
+  clauses for them was measured 3 to 8 times slower.
 \end{description}
 
 \section{Reconstruction of the \alethe rules}
@@ -526,7 +532,9 @@ bound to \path{Classical.epsilon} over \path{reconstructSortLevelAndSort}.
   \midrule
   \code{resolution} & existing \code{Prop.reconstructResolution}, \code{Prop.getResolutionResult}; \\
   & new \code{ResNorm.proveClause} when \code{smt.alethe.reflect} is set \\
-  \code{contraction}, \code{or} & new lemma \code{orN_of_map}; \code{ResNorm} when set \\
+  \code{contraction} & new lemma \code{orN_of_map}; \code{ResNorm} when set, unless \\
+  & the premise is already the conclusion \\
+  \code{or} & new lemma \code{orN_of_map} \\
   \code{weakening} & existing \code{Prop.orN_append_left} \\
   \code{subproof} & new lemma \code{orN_of_impliesN} \\
   \code{hole} & trusted, through \code{addTrustWith} \\
