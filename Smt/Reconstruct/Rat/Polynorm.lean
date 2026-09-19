@@ -27,17 +27,63 @@ structure Var where
   val  : Nat
 deriving DecidableEq, Repr
 
-instance : LE Var where
-  le v₁ v₂ := v₁.type < v₂.type ∨ (v₁.type = v₂.type ∧ v₁.val ≤ v₂.val)
+/-- The order on variables --- integer-sorted before rational-sorted, then by index --- decided
+    in one pass of kernel-accelerated `Nat` primitives. The `LE`/`LT` instances this replaces put
+    a `Bool` `<` under an `Or`/`And` `Decidable` chain, and the merge asked for both `<` and `=`
+    over the same lists: two traversals of two instance chains per step, all of it unfolded by
+    the kernel, which is what evaluates this. -/
+def cmpVar (x y : Var) : Ordering :=
+  match x.type, y.type with
+  | false, true => .lt
+  | true, false => .gt
+  | _, _ => if Nat.blt x.val y.val then .lt else if Nat.beq x.val y.val then .eq else .gt
 
-instance : LT Var where
-  lt v₁ v₂ := v₁.type < v₂.type ∨ (v₁.type = v₂.type ∧ v₁.val < v₂.val)
+/-- `x ≤ y` in that order, as `Bool`. -/
+def bleVar (x y : Var) : Bool :=
+  match x.type, y.type with
+  | false, true => true
+  | true, false => false
+  | _, _ => Nat.ble x.val y.val
 
-instance (v₁ v₂ : Var) : Decidable (v₁ ≤ v₂) :=
-  if h : v₁.type < v₂.type ∨ (v₁.type = v₂.type ∧ v₁.val ≤ v₂.val) then isTrue h else isFalse h
+/-- A three-way comparison of two monomials' variables, in one pass. -/
+def cmpVars : List Var → List Var → Ordering
+  | [], [] => .eq
+  | [], _ :: _ => .lt
+  | _ :: _, [] => .gt
+  | x :: xs, y :: ys =>
+    match cmpVar x y with
+    | .lt => .lt
+    | .gt => .gt
+    | .eq => cmpVars xs ys
 
-instance (v₁ v₂ : Var) : Decidable (v₁ < v₂) :=
-  if h : v₁.type < v₂.type ∨ (v₁.type = v₂.type ∧ v₁.val < v₂.val) then isTrue h else isFalse h
+theorem cmpVar_eq : {x y : Var} → cmpVar x y = .eq → x = y
+  | ⟨false, _⟩, ⟨true, _⟩, h => by simp only [cmpVar] at h; exact Ordering.noConfusion h
+  | ⟨true, _⟩, ⟨false, _⟩, h => by simp only [cmpVar] at h; exact Ordering.noConfusion h
+  | ⟨false, _⟩, ⟨false, _⟩, h => by
+    simp only [cmpVar] at h
+    split at h
+    · exact Ordering.noConfusion h
+    · split at h
+      · next hb => simp [Nat.eq_of_beq_eq_true hb]
+      · exact Ordering.noConfusion h
+  | ⟨true, _⟩, ⟨true, _⟩, h => by
+    simp only [cmpVar] at h
+    split at h
+    · exact Ordering.noConfusion h
+    · split at h
+      · next hb => simp [Nat.eq_of_beq_eq_true hb]
+      · exact Ordering.noConfusion h
+
+theorem cmpVars_eq : {xs ys : List Var} → cmpVars xs ys = .eq → xs = ys
+  | [], [], _ => rfl
+  | [], _ :: _, h => by simp only [cmpVars] at h; exact Ordering.noConfusion h
+  | _ :: _, [], h => by simp only [cmpVars] at h; exact Ordering.noConfusion h
+  | x :: xs, y :: ys, h => by
+    simp only [cmpVars] at h
+    split at h
+    · contradiction
+    · contradiction
+    · next he => rw [cmpVar_eq he, cmpVars_eq h]
 
 abbrev Context := Var → Rat
 
@@ -81,7 +127,7 @@ where
 def neg (m : Monomial) : Monomial :=
   { m with coeff := -m.coeff }
 
-def add (m₁ m₂ : Monomial) (_ : m₁.vars = m₂.vars) : Monomial :=
+def add (m₁ m₂ : Monomial) : Monomial :=
   { coeff := m₁.coeff + m₂.coeff, vars := m₁.vars }
 
 -- Invariant: monomial variables remain sorted.
@@ -92,7 +138,9 @@ def mul (m₁ m₂ : Monomial) : Monomial :=
 where
   insert (x : Var) : List Var → List Var
     | [] => [x]
-    | y :: ys => if x ≤ y then x :: y :: ys else y :: insert x ys
+    | y :: ys => match bleVar x y with
+      | true => x :: y :: ys
+      | false => y :: insert x ys
 
 def divConst (m : Monomial) (c : Rat) : Monomial :=
   { m with coeff := m.coeff / c }
@@ -132,14 +180,14 @@ theorem foldl_mul_insert {ctx : Context} :
   induction ys with
   | nil => simp [mul.insert]
   | cons x ys ih =>
-    by_cases h : y ≤ x
-    · simp [mul.insert, h, foldl_assoc Rat.mul_assoc (ctx y) (ctx x)]
-    · simp only [mul.insert, h, List.foldl_cons, ite_false, Rat.mul_comm,
+    cases h : bleVar y x
+    · simp only [mul.insert, h, List.foldl_cons, Rat.mul_comm,
                  foldl_assoc Rat.mul_assoc, ih]
       rw [← Rat.mul_assoc, Rat.mul_comm (ctx x) (ctx y), Rat.mul_assoc]
+    · simp [mul.insert, h, foldl_assoc Rat.mul_assoc (ctx y) (ctx x)]
 
 theorem denote_add {m n : Monomial} (h : m.vars = n.vars) :
-  (m.add n h).denote ctx = m.denote ctx + n.denote ctx := by
+  (m.add n).denote ctx = m.denote ctx + n.denote ctx := by
   simp only [add, denote, Rat.add_mul, h]
 
 theorem denote_mul {m₁ m₂ : Monomial} : (m₁.mul m₂).denote ctx = m₁.denote ctx * m₂.denote ctx := by
@@ -176,13 +224,12 @@ def neg (p : Polynomial) : Polynomial :=
 def addAux (m : Monomial) (k : Polynomial → Polynomial) : Polynomial → Polynomial
   | [] => m :: k []
   | n :: ns =>
-    if m.vars < n.vars then
-      m :: k (n :: ns)
-    else if h : m.vars = n.vars then
-      let m' := m.add n h
+    match cmpVars m.vars n.vars with
+    | .lt => m :: k (n :: ns)
+    | .eq =>
+      let m' := m.add n
       if m'.coeff = 0 then k ns else m' :: k ns
-    else
-      n :: addAux m k ns
+    | .gt => n :: addAux m k ns
 
 -- NOTE: implementation merges monomials with same variables.
 -- Invariant: monomials remain sorted.
@@ -234,23 +281,23 @@ theorem denote_addAux {ctx : Context} {m : Monomial} {ms : Polynomial}
     simp only [addAux]
     split
     · simp only [denote_cons, ih, Rat.add_assoc]
-    · split
-      · rename_i h
-        have hmn := Monomial.denote_add (ctx := ctx) h
-        split
-        · rename_i hz
-          have : Monomial.denote ctx (m.add n h) = 0 := by
-            simp only [Monomial.denote, hz, Rat.zero_mul]
-          rw [this] at hmn
-          simp only [denote_cons, ih]
-          rw [show m.denote ctx + denote ctx ms + (n.denote ctx + denote ctx ns)
-                = (m.denote ctx + n.denote ctx) + (denote ctx ms + denote ctx ns) by
-                simp only [Rat.add_assoc, Rat.add_left_comm],
-              ← hmn, Rat.zero_add]
-        · simp only [denote_cons, ih, hmn]
-          simp only [Rat.add_assoc, Rat.add_left_comm]
-      · simp only [denote_cons, ihq]
+    · rename_i he
+      have h := cmpVars_eq he
+      have hmn := Monomial.denote_add (ctx := ctx) h
+      split
+      · rename_i hz
+        have : Monomial.denote ctx (m.add n) = 0 := by
+          simp only [Monomial.denote, hz, Rat.zero_mul]
+        rw [this] at hmn
+        simp only [denote_cons, ih]
+        rw [show m.denote ctx + denote ctx ms + (n.denote ctx + denote ctx ns)
+              = (m.denote ctx + n.denote ctx) + (denote ctx ms + denote ctx ns) by
+              simp only [Rat.add_assoc, Rat.add_left_comm],
+            ← hmn, Rat.zero_add]
+      · simp only [denote_cons, ih, hmn]
         simp only [Rat.add_assoc, Rat.add_left_comm]
+    · simp only [denote_cons, ihq]
+      simp only [Rat.add_assoc, Rat.add_left_comm]
 
 theorem denote_add {p q : Polynomial} : (p.add q).denote ctx = p.denote ctx + q.denote ctx := by
   induction p generalizing q with
