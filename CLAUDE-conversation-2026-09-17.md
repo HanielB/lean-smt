@@ -219,3 +219,153 @@ both caught by Haniel noticing the hash was absent from `bv-fixes`:
 Now: `6358c32b` is pushed to `origin/bv-fixes`, `scripts/setup-alethe.sh` pins
 it, and the references above are corrected. The lesson for the cluster drops
 too -- read the hash *after* any amend, and confirm the push before pinning.
+
+## Turn: 2026-09-17 17:23:06 (session 6cc35fc7)
+
+You're right, and there were two mistakes behind it.
+
+**The hash was stale.** I amended that commit to strip `cargo fmt`'s reformatting of `mod.rs`, which changes the hash. I had read `8a537147` before the amend and then reused it afterwards, including in the pin. The real commit is **`6358c32b`**; `8a537147` survived only as a dangling local object, which is why it appeared to exist when I checked but was on no branch.
+
+**And I never pushed it.** `origin/bv-fixes` was still at `69c92a64` with my branch one commit ahead, so even the correct hash would not have been visible to you or reachable by a fresh checkout.
+
+Both are fixed:
+
+- `6358c32b` is pushed and `origin/bv-fixes` now points at it.
+- `scripts/setup-alethe.sh` pins `6358c32b`.
+- The lean-smt commit is amended to `5987dd6`, naming the right hash, and the three references in today's log are corrected with a note on what went wrong.
+
+The only remaining occurrence of the old hash is inside that correction note, where it belongs.
+
+Worth flagging for the same reason it bit here: the cluster deploy scripts also embed Carcara hashes in their headers and verify against `--version`. Had this gone into a round-nine drop unnoticed, the deploy would have uploaded a binary whose stamp disagreed with the documented pin. Reading the hash after any amend, and confirming the push before pinning, is the habit that prevents it.
+
+## The `la_generic` tail, diagnosed
+
+Round eight, over the proofs each solver validates: `la_generic` costs 4.83 CPU
+hours in 130,744 steps for cvc5 (133 ms a step) and 13.79 hours in 939,828 for
+veriT (52.8 ms) -- 18.6 hours, the third rule by total time behind `resolution`
+(201 h) and `poly_simp` (11.7 h). Carcara checks the same elaborated steps at
+40 us. At the 99th percentile of per-benchmark mean step time the two are 6.7 s
+against 1.1 ms, which is the tail the box plot shows.
+
+Local reproduction: `clocksynchro_8clocks.worst_case_skew.induct.smt2`, the
+veriT proof, 6,318 steps of which 1,141 `la_generic`. lean-smt checks it in
+375 s, of which `la_generic` is 328.9 s (88%); of that the kernel is 307.9 s
+(94%) and reconstruction 21 s. Every step costs about the same -- median 280 ms,
+p90 464 ms, max 802 ms -- so this is the rule's normal cost, not a few outliers.
+
+One step in isolation: 455 ms of kernel. The same step under `native`: 30 ms.
+So 93% of the kernel's time is the reflective `decide` that `poly_norm` hands
+it, and the `denote` defeq that carries its type back to the stated goal, the
+`sum_ub` chain and the sign facts together are the remaining 7%.
+
+Inside that `decide` (a synthetic replica that reproduces the 264 ms):
+
+| phase                        | ms  | share |
+|------------------------------|-----|-------|
+| `RatExpr.flatten`            |  42 |  16%  |
+| `Polynomial.normalize`       | 220 |  83%  |
+| the final list equality      |   2 |   1%  |
+
+What it is *not*: the size of the numbers (Farkas multipliers of 2e12 against
+single digits, 266 vs 262 ms), rational against integer coefficients (270 vs
+257), or the `Int` normalizer being any better (388 ms, worse). Nor is it
+superlinear -- 176 to 1,408 monomials takes 333 to 2,457 ms. It is the kernel
+reducing the merge sort at roughly 1.5 ms a monomial, against 2 ms for the whole
+step compiled.
+
+The lever is therefore the representation the kernel reduces. A monomial's
+variable part is `List Var` with `Var` a `Bool`-`Nat` structure whose `<` goes
+through `Bool`'s `<` under an `Or`/`And` `Decidable` chain, and `addAux` tests
+`vars < vars` and then `vars = vars` -- two traversals of two instance chains
+per merge step. Keyed by one `Nat` instead, the same merge sort over the same
+monomials runs 1.4-3.4 times faster in the kernel (most readings near 2x).
+That predicts about 1.5-1.8x on `la_generic` overall, and the normalizer is
+shared with `poly_simp`, so it is roughly 12 of the round's 356 hours.
+
+Nothing here can move to Carcara: the Farkas combination is one linear-algebra
+fact and the elaborated step is already in its cheapest form. And the honest
+ordering is that `resolution` is still 201 hours, so stage two of
+RESOLUTION-PLAN dominates any of this.
+
+(Absolute timings from the later probes are noisy -- another carcara experiment
+was running eight processes on the machine, load average 27. Ratios were taken
+within single runs.)
+
+## Turn: 2026-09-17 18:09:08 (session 6cc35fc7)
+
+`la_generic` is the third rule by total time in round eight, and its cost is almost entirely one thing.
+
+## Where it stands
+
+Over the proofs each solver validates: 4.83 CPU hours in 130,744 steps for cvc5 (133 ms/step) and 13.79 hours in 939,828 for veriT (52.8 ms) — 18.6 hours, behind `resolution` (201 h) and `poly_simp` (11.7 h). Carcara checks the same elaborated steps at 40 µs. At the p99 of per-benchmark mean step time it is 6.7 s against 1.1 ms, which is the tail you're looking at.
+
+## Where the time goes
+
+I reproduced it locally on `clocksynchro_8clocks.worst_case_skew.induct.smt2` (veriT proof, 1,141 of 6,318 steps are `la_generic`). lean-smt checks the proof in 375 s, of which `la_generic` is 328.9 s — and **94% of that is the kernel**, only 21 s is reconstruction. Every step costs roughly the same (median 280 ms, p90 464 ms, max 802 ms), so this is the rule's normal cost, not outliers.
+
+One step in isolation: 455 ms of kernel; the same step under `native`: 30 ms. So **93% of the kernel time is the reflective `decide` that `poly_norm` hands it**. Splitting that:
+
+| phase | ms | share |
+|---|---|---|
+| `RatExpr.flatten` | 42 | 16% |
+| `Polynomial.normalize` (merge sort) | 220 | 83% |
+| final list equality | 2 | 1% |
+
+What it is *not*: the magnitude of the Farkas multipliers (2·10¹² vs single digits — 266 vs 262 ms), rational vs integer coefficients (270 vs 257), or the `Int` normalizer being better (it's worse, 388 ms). It is not superlinear either: 176 → 1,408 monomials goes 333 → 2,457 ms. The kernel simply reduces the merge sort at ~1.5 ms per monomial, against 2 ms for the whole step compiled.
+
+## What can be optimized
+
+The lever is the representation the kernel reduces, not the algorithm. A monomial's variable part is `List Var`, with `Var` a `Bool`×`Nat` structure whose `<` goes through `Bool`'s `<` under an `Or`/`And` `Decidable` chain — and `addAux` tests `vars < vars` and *then* `vars = vars`, two traversals of two instance chains per merge step. I prototyped the same merge sort over the same monomials keyed by a single `Nat` (kernel-accelerated comparisons): **1.4–3.4× faster, most readings near 2×**.
+
+That predicts ~1.5–1.8× on `la_generic` overall (18.6 h → 11–12 h), and the normalizer is shared with `poly_simp`, so about 12 of the round's 356 hours. The catch is that `Polynorm` also serves the nonlinear path, so the key has to be a `List Nat` in general; for `la_generic` it always collapses to one `Nat`.
+
+Two things worth saying plainly: unlike `distinct_elim`, **nothing here moves to Carcara** — the Farkas combination is one linear-algebra fact and the elaborated step is already minimal. And `resolution` is still 201 of those 356 hours, so stage two of `RESOLUTION-PLAN` dominates anything `la_generic` can give.
+
+Caveat on the numbers: another carcara experiment was running eight processes on this machine (load 27) during the later probes, so absolute timings there are noisy; every ratio I quote was taken within a single run. The diagnosis is written up in `CLAUDE-conversation-2026-09-17.md`. I have not touched `Polynorm.lean` — the `Var` re-keying means redoing the ordering proofs in both the `Int` and `Rat` modules, which is a real refactor of a shared proof-carrying module; say the word and I'll do it.
+
+## The `omega` call in `la_generic`'s integer strengthening
+
+Asked why the strengthening calls `omega` rather than applying a lemma. It can
+be a lemma -- this one proves, with both side conditions closed facts about
+numerals, `t` being 1 for a strict literal and 0 otherwise and `q` the rounded
+quotient `strengthenGain` already computes:
+
+```lean
+theorem strengthen {a b g c q t M δ : Int}
+    (hg : 0 < g) (h : t ≤ b - a) (heq : b - a = g * M + c)
+    (hq : g * q + c < t) (hδ : g * (q + 1) + c = δ) : a + δ ≤ b := by
+  have hlt : g * q < g * M := by omega
+  have hqM : q + 1 ≤ M := Int.lt_of_mul_lt_mul_left hlt (Int.le_of_lt hg)
+  have : g * (q + 1) ≤ g * M := Int.mul_le_mul_of_nonneg_left hqM (Int.le_of_lt hg)
+  omega
+```
+
+The only reconstructor change is for `poly_norm` to prove `b - a = g * M + c`
+with `M = Σ (dᵢ/g)·xᵢ` instead of `b - a = Σ dᵢ·xᵢ + c` -- the same
+normalization, spelled differently.
+
+Measured with a temporary counter at the call site (since reverted): **0 calls**
+across nine integer proofs, ~50k steps and ~740 `la_generic` steps, the largest
+being the 44,110-step `SMPT SharedMemory-PT-000020`. The path needs *every*
+coefficient of a literal's linear form to share a factor, and both solvers emit
+gcd-normalized atoms. `rings_preprocessed__ring_2exp6_4vars_2ite` (67 MB,
+14,563 `la_generic`) did not finish in 45 minutes, so it gave no count.
+
+A synthetic step that does force it -- `(cl (not (<= (+ (* 2 x) (* 2 y)) 1))
+(<= (+ x y) 0))` with `:args (1.0 2.0)` -- confirms the path and costs 2.5 ms
+for the one call, in a step whose whole reconstruction is 16 ms.
+
+So replacing it is a robustness fix, not a speed one: a failed `omega` re-throws
+and the step becomes a trusted hole, the call site already folds over the whole
+local context on every call to dodge omega's cost, and it is the only part of
+`la_generic` whose cost is not a lemma application. Two of the three `omega`
+sites in `Arith.lean` are fixed-shape (this one, and `div_intro` for a constant
+divisor, where `div_intro_pos`/`div_intro_neg` already cover the symbolic case);
+`lia_generic` genuinely needs a decision procedure and stays.
+
+Incidentally: the 727-literal `la_generic` step of that SMPT proof costs 810 ms
+of reconstruction, ~1.1 ms a literal, against 0.8 ms a literal for the QF_LRA
+steps -- linear, not quadratic, but it means the rule has two bottlenecks: the
+kernel's `normalize` for rational steps with many monomials, and reconstruct-side
+term building for integer steps with many literals. (Those steps sit at depth 2,
+so their kernel cost is attributed to the enclosing `subproof`.)
