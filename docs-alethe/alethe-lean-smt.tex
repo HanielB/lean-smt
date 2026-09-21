@@ -922,23 +922,35 @@ moved by 1\% and 0\%.
 under the hammer'' baseline set, the quantified Isabelle goals the \tactic
 paper evaluates on, with the same limits, and with \cvcv given the
 instantiation options that paper used. These proofs are two to three orders
-of magnitude smaller than the SMT-LIB ones: a median of 58 elaborated steps
-for \cvcv and 110 for \verit, against tens of thousands in QF\_UF.
+of magnitude smaller than the SMT-LIB ones: a median of 59 elaborated steps
+for \cvcv and 62 for \verit, against tens of thousands in QF\_UF.
 
-\paragraph{Outcomes.} Table~\ref{tab:seventeen} gives the round. Coverage is
-close to total: the checker validates 2\,858 of the 2\,868 \cvcv proofs
-\carcara accepts (99.7\%) and 2\,520 of the 2\,598 \verit ones (97.0\%), with
-one and three timeouts and, for \verit, 21 runs that exhausted the memory.
-What limits the round is the solver, not the checker --- 2\,869 and 2\,681 of
-the 5\,000 problems are proved unsatisfiable at all --- and, for \verit,
-\carcara's own check, which rejects 83 proofs, the integer/real parser
-defect and \rulename{lia\_generic} steps. Every other measurement in this
-report is from the current toolchain; this corpus is the exception. It was
-last run several rounds ago, before that parser fix and the
-\rulename{ac\_simp} one, and has not been repeated since --- the rounds since
-have run the twelve SMT-LIB logics alone. The \verit numbers here are
-correspondingly pessimistic, and none of the changes the sections around it
-measure are reflected in them.
+\paragraph{Outcomes.} Table~\ref{tab:seventeen} gives the round, and on this
+corpus the checker has caught up with \carcara exactly. It validates
+\emph{every} one of the 2\,869 \cvcv proofs \carcara accepts, and 2\,592 of
+the 2\,600 \verit ones (99.7\%). Neither solver leaves a timeout or a memory
+failure. What limits the round is the solver --- 2\,870 and 2\,681 of the
+5\,000 problems are proved unsatisfiable at all --- and, for \verit,
+\carcara's own check, which rejects 81 proofs: 80 are a
+\rulename{and\_simplify} step its checker does not accept, the same defect
+that rejects 102 \verit proofs in the SMT-LIB round, and one is a
+\rulename{forall\_inst}.
+
+The round before this one on the same corpus had a visibly larger residue ---
+2\,858 and 2\,520 validated, 9 and 51 proofs with a trusted step, three
+timeouts and 21 \verit runs that exhausted memory --- and the difference is
+what the rounds in between fixed, with nothing going the other way: no proof
+that validated then fails now. For \cvcv, 8 of its 9 were a \rulename{bind}
+step the kernel rejected over \verit-style anchors that both keep a variable
+and substitute it, and \carcara's \texttt{polyeq} now closes those subproofs
+by \rulename{refl}; the ninth is a genuine \rulename{hole}, which \carcara
+reports holey too, so the two checkers now agree on this corpus proof for
+proof. For \verit, 21 errors and three timeouts became validations, and the
+trusted steps fell from 88 to 15, of which the 76 \rulename{onepoint} became
+3 --- the general handler following \carcara's \texttt{extract\_points} --- and
+the 9 \rulename{qnt\_simplify} became none. \carcara's own rejections fell
+from 83 to 81, the three that went being sort errors from the integer/real
+printer defect.
 
 \begin{table}[t]
   \centering
@@ -954,25 +966,27 @@ measure are reflected in them.
     \cmidrule(lr){4-7}
     solver & proof & \carcara & valid & t/o & mem & holey & \carcara h & \tactic h & slower \\
     \midrule
-    \cvcv  & 2\,869 & 2\,868 & 2\,858 & 1 &  0 &  9 & 0.04 & 4.5 & 234$\times$ \\
-    \verit & 2\,681 & 2\,598 & 2\,520 & 3 & 21 & 51 & 0.02 & 3.8 & 483$\times$ \\
+    \cvcv  & 2\,870 & 2\,869 & 2\,869 & 0 &  0 & 1 & 0.02 & 4.2 & 239$\times$ \\
+    \verit & 2\,681 & 2\,600 & 2\,592 & 0 &  0 & 5 & 0.01 & 3.8 & 484$\times$ \\
     \bottomrule
   \end{tabular}
 \end{table}
 
 \paragraph{Against \carcara.} Figure~\ref{fig:sh} is the comparison of
 Figure~\ref{fig:smtlib} on this corpus. \carcara checks and elaborates in a
-median of 0.02\,s and 0.01\,s; the checker's median of 5.0\,s (\cvcv) and
-5.1\,s (\verit) is almost entirely the cost of loading the library, not of
-checking, which is why the points form a horizontal band. On the 2\,843 and
-2\,414 proofs both validate the checker is a median of 234$\times$ and
-483$\times$ slower --- the same factors as in the SMT-LIB round, for a
+median of 0.02\,s and 0.01\,s; the checker's median of 5.1\,s is almost
+entirely the cost of loading the library, not of
+checking, which is why the points form a horizontal band. On the 2\,869 and
+2\,592 proofs both validate the checker is a median of 239$\times$ and
+484$\times$ slower --- the same factors as in the SMT-LIB round, for a
 different reason: there they measure a kernel replaying large derivations,
 here a fixed startup cost against a checker that finishes in hundredths of a
-second. Over the round the checker costs 4.5 and 3.8 CPU hours, against 72.2
-and 92.8 hours of solving.
-The few timeouts sit at the top of the size distribution --- 516 elaborated
-steps for \cvcv's one, and 2\,876 to 3\,015 for \verit's three.
+second. Over the round the checker costs 4.2 and 3.8 CPU hours, against 72.2
+and 92.8 hours of solving. The proof that the fixed cost dominates is the
+\texttt{native} arm: it validates the same 2\,869 and 2\,592 proofs at a
+median ratio of 0.95, against 0.93 in the SMT-LIB round, because on a proof of
+sixty steps there is almost nothing for it to evaluate --- on the smoke
+benchmark, 10 of the checker's 961 milliseconds were the kernel's.
 
 \begin{figure}[t]
   \centering
@@ -990,13 +1004,14 @@ cumulative plot for this corpus, and it looks different in an instructive
 way. Restricted to the proofs each configuration validates, solving is cheap
 --- a median of a third of a second for \cvcv and a tenth for \verit --- so
 the curves are dominated by what comes after it. \carcara disposes of all
-2\,868 \cvcv proofs in 1.37 CPU hours including the solving, and of 2\,598
-\verit ones in 1.22; the checker takes 5.8 and 5.0 for 2\,858 and 2\,520 of
-them, four times as much for all but a handful fewer. The checker's curve is
+2\,869 \cvcv proofs in 1.41 CPU hours including the solving, and of 2\,600
+\verit ones in 1.21; the checker takes 5.7 and 4.9 for 2\,869 and 2\,592 of
+them, four times as much for the same proofs or all but eight of them. The
+checker's curve is
 close to a straight line, because on proofs this small its cost is the fixed
 one of loading the library rather than anything about the derivation. Within
-\carcara's whole budget the checker validates the first 1\,059 (\cvcv) and
-963 (\verit).
+\carcara's whole budget the checker validates the first 1\,115 (\cvcv) and
+971 (\verit).
 
 \begin{figure}[t]
   \centering
@@ -1007,22 +1022,21 @@ one of loading the library rather than anything about the derivation. Within
   \label{fig:cactussh}
 \end{figure}
 
-\paragraph{What is left.} The residue is small and, for each solver, of one
-kind. \cvcv leaves nine proofs: eight whose \rulename{bind} step the kernel
-rejected with a type mismatch --- \verit-style anchors that both keep a
-variable and substitute it, since read consistently --- and one genuine
-\rulename{hole}. \verit leaves 51, of which 47 are \rulename{onepoint}: 37
-because the anchor assigned two or three variables at once where the
-reconstructor supported one, and 13 because the guard equality sat in a body
-shape its traversal did not reach; the reconstructor is now the general one,
-following \carcara's \texttt{extract\_points}, and closes all of them. The
-remaining four are three \rulename{qnt\_simplify} steps, since reconstructed,
-and one \rulename{symm}/\rulename{trans} pair inside a \rulename{bind} whose
-subproof both renames a variable and flips an equality; \carcara's
-\rulename{symm} is name-syntactic there and the block has no consistent
-reading as terms, so the remedy is on the producer's side --- the alpha-
-equivalent \rulename{bind}s that \carcara's \texttt{polyeq} now closes by
-\rulename{refl} remove every other instance of the pattern.
+\paragraph{What is left.} Six proofs in 5\,471, and every one of them is now
+a distinct question rather than an instance of a pattern. \cvcv leaves one,
+the genuine \rulename{hole}. \verit leaves five: two \rulename{onepoint} steps
+whose guard the traversal still does not find --- one where the conjunct sits
+under an application of a term-level function symbol, one where the body is a
+bare Isabelle \texttt{thesis} variable with no guard at all; two proofs whose
+\rulename{eq\_transitive}, \rulename{eq\_congruent} and \rulename{la\_generic}
+steps are stated over \texttt{let}-bound numerals, where the chain matching
+compares the \texttt{let} spellings rather than what they denote; and one
+\rulename{bind} the kernel rejects with an application type mismatch, the last
+survivor of the group that made up eight of \cvcv's nine in the previous
+round. The \texttt{let} group is the interesting one, because it is the same
+shape the SMT-LIB round meets as numeral matching in assumptions
+(Section~\ref{sec:rules}): two readings of one term that agree on value and
+differ on spelling.
 
 \subsection{What the Proofs Revealed}
 \label{sec:revealed}
@@ -1191,7 +1205,10 @@ that led us to keep per-step checking as the default
 indistinguishable --- 2\,725 against 2\,858 for \cvcv, 2\,508 against 2\,520
 for \verit, at the same median cost (Figure~\ref{fig:stepshotsh}) --- which
 is the other side of the SMT-LIB finding: the one-term shape loses only when
-the derivation is too large to hold at once. Of the one-term failures, 133
+the derivation is too large to hold at once. The per-step column here is that
+earlier round's, not the one Section~\ref{sec:seventeen} reports: the one-term
+arm has not been run since, so the comparison is drawn as it was measured.
+Of the one-term failures, 133
 (\cvcv) and 12 (\verit) were the term-mode premise-type defect, since fixed;
 with it the two columns essentially coincide, and every remaining difference
 is a proof the per-step arm also fails.
