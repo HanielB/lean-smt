@@ -934,7 +934,10 @@ failure. What limits the round is the solver --- 2\,870 and 2\,681 of the
 \carcara's own check, which rejects 81 proofs: 80 are a
 \rulename{and\_simplify} step its checker does not accept, the same defect
 that rejects 102 \verit proofs in the SMT-LIB round, and one is a
-\rulename{forall\_inst}.
+\rulename{forall\_inst}. Three more \verit proofs that \carcara's check
+accepts never reach the checker: its elaborator panics on them in the
+\texttt{polyeq} pass (``terms not equal'') and prints no proof, which is why
+the \tactic columns of the table account for 2\,597 of the 2\,600.
 
 The round before this one on the same corpus had a visibly larger residue ---
 2\,858 and 2\,520 validated, 9 and 51 proofs with a trusted step, three
@@ -1022,8 +1025,11 @@ one of loading the library rather than anything about the derivation. Within
   \label{fig:cactussh}
 \end{figure}
 
-\paragraph{What is left.} Six proofs in 5\,471, and every one of them is now
-a distinct question rather than an instance of a pattern. \cvcv leaves one,
+\paragraph{What is left.} Nine proofs in 5\,470 --- the 2\,870 \cvcv and
+2\,600 \verit proofs \carcara does not reject. Three are the \verit proofs its
+elaborator drops before the checker sees them, the same panic on all three.
+The six the checker does see are each a distinct question rather than an
+instance of a pattern. \cvcv leaves one,
 the genuine \rulename{hole}. \verit leaves five: two \rulename{onepoint} steps
 whose guard the traversal still does not find --- one where the conjunct sits
 under an application of a term-level function symbol, one where the body is a

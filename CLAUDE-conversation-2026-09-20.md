@@ -488,3 +488,62 @@ Report updated and rebuilt (26 pages): `tab:seventeen`, the three
 Sledgehammer paragraphs, the three figures regenerated, and a note in the
 shape section that its per-step column is the earlier round's, since the
 one-term arm has not been re-run.
+
+## Turn: 2026-09-20 21:37:45 (session 18d95de2)
+
+Committed as **`1f924d5`**.
+
+```
+1f924d5  Report: the Sledgehammer corpus, re-run on the current toolchain
+bbd9e4c  Report and summary: round nine, and a box plot over one population
+```
+
+Six files, 265 insertions: the report source and PDF, the three regenerated Sledgehammer figures, and today's log. The message records the coverage result, the six-proof residue, and the correction to the rejection breakdown I'd inherited.
+
+Round nine is now complete and fully documented — both corpora on carcara `6358c32b` and lean-smt `6dec36a`, with no measurement in the report older than this round except the one-term shape comparison, which is flagged as such.
+
+Two things left on the table from this session, neither started:
+
+- **`leanshot` on Sledgehammer** would retire that last stale section for one extra 900 s arm per task — cheap on proofs this small.
+- **Stage two of `RESOLUTION-PLAN.md`.** After this round, `resolution` is 202 of the checker's 332 CPU hours on the drawn population and `semilattice_simp` another 38; everything else together is under a quarter. The `distinct_elim` and `poly_norm` work was worth doing, but the next hour comes from there.
+
+## Turn: 2026-09-20 23:31:17 (session 18d95de2)
+
+There isn't one. Let me be straight about that, and about why.
+
+## Why there's no plan
+
+Unlike `resolution` — which had an obviously bad shape, replayed link by link with a quadratic `getD` — `semilattice_simp` is *already* in the shape I would otherwise propose. `AciNorm` reifies a layer into a binary tree over atom indices and normalizes to a **bitset in a `Nat`**, using the kernel's accelerated `shiftLeft`/`lor`/`xor`. Its own docstring claims `O(n)` kernel steps for a layer of `n` atoms. That's the `Nat`-keyed, primitive-op design the `Polynorm` re-keying was converging on.
+
+So there's no cheap structural win visible from the outside, and I have never profiled the rule. I don't know its reconstruct/kernel split, and the `native` arm can't tell me — it reads 1.00× because `native` doesn't touch `AciNorm` at all, only the arithmetic normalizer and the decidable side conditions.
+
+## What round nine does say, and it narrows things sharply
+
+38.0 CPU hours, 11.5% of the checker's time, 4.99 M steps — and **36.0 of the 38 are veriT**. The distribution is extremely concentrated:
+
+| logic | hours | steps | ms/step |
+|---|---:|---:|---:|
+| **QF_UFLRA** | **23.95** | 676,761 | **127.41** |
+| QF_UF | 4.35 | 2,761,525 | 5.68 |
+| QF_IDL | 3.55 | 684,669 | 18.67 |
+| QF_LIA | 3.33 | 194,686 | 61.49 |
+
+QF_UFLRA is 63% of the rule's cost on 14% of its steps, at 22× QF_UF's per-step price. And by benchmark: **half the total sits in 153 benchmarks (0.6%)**, 90% in 2,081. Per-benchmark mean step time is 4.80 ms at the median, 236 ms at p99, 30 s at the max. The worst are `convert-jpg2gif-query-*` at 770 ms a step and the `FISCHER*` family at 440–500.
+
+Note also that its ratio against Carcara — 967× — is the *best* of any high-volume rule (`resolution` 3,198×, `cong` 2,819×). Per step we're comparatively efficient. The 38 hours are volume plus one bad population.
+
+## What I'd actually do
+
+Measure before designing, exactly as with `la_generic`, because the concentration means a handful of QF_UFLRA proofs will explain the whole thing:
+
+1. **Reconstruct vs kernel**, from a local run's `steps.csv`. Nothing in the archive carries that split.
+2. **Inside the kernel, the `decide` of the normal form against the denotation check.** The module's own docstring flags this: `O(n)` steps *"plus the unfolding of the denotation against the original formula"*. For `la_generic` the analogous bridge was 7%; here there's no `sum_ub` chain to dwarf it, so it could be most of the cost.
+3. **What it scales in** — layer width, atom-context size, or nesting depth. If QF_UFLRA's layers are wide, the bitset is a wide `Nat` and `n` GMP ops on `n`-bit numbers is `O(n²/64)`, which would show as a width-squared curve.
+
+And the producer-side question, which is where this project's last two wins came from: are 5 M layer-steps necessary? Carcara decomposes nested AC into per-layer steps glued by `cong`/`trans`. If veriT's QF_UFLRA proofs nest deeply, we may be paying a denotation bridge per tiny layer where fewer, wider layers would do. That's an elaboration experiment, not a checker one.
+
+## Priority, honestly
+
+`resolution` is 202 hours against this 38. Stage two of `RESOLUTION-PLAN.md` is still worth more than anything here, and the `la_generic` result is the cautionary tale: a clean 2× on the isolated hot spot came out as 1.12× across the corpus. I'd want the measurement above before promising `semilattice_simp` anything.
+
+Want me to run that profile? It's one local run on a heavy QF_UFLRA veriT proof, which I can pull from the mirror.

@@ -36,11 +36,11 @@ term on wide chains.
 
 **Profile of the one benchmark in the repo** (`steps.csv`, 6 913 steps):
 
-| | steps | time | note |
-|---|---|---|---|
-| all `resolution` | 673 | 2.11 s (8.5 % of the run) | 70 % of it kernel — the most kernel-bound rule |
-| 2–3 premises | 669 | ~0.9 s | median **1.24 ms**/step |
-| the 230-premise chain (`t6906`) | 1 (+3 budget offcuts) | **1.18 s** | **56 %** of all resolution time |
+|                                 | steps                 | time                      | note                                           |
+|---------------------------------|-----------------------|---------------------------|------------------------------------------------|
+| all `resolution`                | 673                   | 2.11 s (8.5 % of the run) | 70 % of it kernel — the most kernel-bound rule |
+| 2–3 premises                    | 669                   | ~0.9 s                    | median **1.24 ms**/step                        |
+| the 230-premise chain (`t6906`) | 1 (+3 budget offcuts) | **1.18 s**                | **56 %** of all resolution time                |
 
 That big step is worth looking at, because it is the shape the design is aimed at: **one
 230-literal clause resolved against 229 unit clauses to give `(cl )`** — 459 literals, 459
